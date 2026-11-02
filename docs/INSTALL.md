@@ -25,7 +25,7 @@ cd InboxMosire-Hermes
 | 动作 | 命令 | 说明 |
 | --- | --- | --- |
 | 装插件 | `./scripts/install.sh plugins` | `hermes plugins install "<repo>#plugins/<id>" --enable`，或 `--local <path>` 从本地 checkout 复制 |
-| 写 token | `./scripts/install.sh token` | 交互式读入（不回显），写 `$HERMES_HOME/inbox-mosire/api-token`（0600） |
+| 写 token | `./scripts/install.sh token` | 交互式读入（不回显）；无终端时用 `INBOX_TOKEN=… ./scripts/install.sh token`；写 `$HERMES_HOME/inbox-mosire/api-token`（0600，目录 0700） |
 | 写设置 | `./scripts/install.sh settings` | 全部走 `hermes config set --force`，不手改 YAML |
 | 体检 | `./scripts/install.sh check` | `plugins list` + `plugins doctor --ci` + `healthz` |
 

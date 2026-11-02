@@ -77,10 +77,16 @@ do_token() {
     ok "token 文件已存在，跳过：$TOKEN_PATH"
     return
   fi
-  [ -t 0 ] || die "需要交互终端来读入 token；也可以先手动创建 $TOKEN_PATH（chmod 600）"
-  printf '输入 InboxMosire adapter token（输入不回显）: '
-  read -r TOKEN
-  printf '\n'
+  if [ -n "${INBOX_TOKEN:-}" ]; then
+    warn "从 INBOX_TOKEN 环境变量取 token（会留在 shell 历史里，随后 unset 掉更好）"
+    TOKEN="$INBOX_TOKEN"
+  elif [ -t 0 ]; then
+    printf '输入 InboxMosire adapter token（输入不回显）: '
+    read -r TOKEN
+    printf '\n'
+  else
+    die "没有交互终端：先手动创建 $TOKEN_PATH（chmod 600），或用 INBOX_TOKEN=... 重跑"
+  fi
   [ -n "${TOKEN:-}" ] || die "token 为空，已退出（没有写任何文件）"
   printf '%s' "$TOKEN" > "$TOKEN_PATH"
   chmod 600 "$TOKEN_PATH"
