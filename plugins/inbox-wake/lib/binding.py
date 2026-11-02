@@ -25,6 +25,11 @@ SESSION_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 PROGRAM_MCP_TOOLS = ("inbox_list", "inbox_status")
 
 
+def _recency_key(record: dict[str, Any]) -> str:
+    """``updatedAt`` / ``createdAt`` are ISO-8601 strings; lexicographic order matches time order."""
+    return str(record.get("updatedAt") or record.get("createdAt") or "")
+
+
 def _is_local_session_key(session_key: str) -> bool:
     """``agent:<profile>:local:<chat_type>:<chat_id>`` — a session owned by a local viewer."""
     parts = str(session_key or "").split(":")
@@ -204,10 +209,19 @@ class BindingManager:
     async_mode_unused = False  # keeps dataclass-less class explicit for readers
 
     def resume_all(self) -> int:
-        """Start workers for bindings persisted by a previous process."""
+        """Start workers for bindings persisted by a previous process.
+
+        Bindings are pruned per inbox first: only the newest ``max_bindings_per_inbox`` stay
+        active. Without this, every one-shot/CLI session that ever autoBound becomes a ghost that
+        the gateway resurrects on start and re-injects into — N agents answering one event.
+        """
         started = 0
+        self._prune_passive()  # cap first: a ghost must not start a worker at all
         for key, record in list(self.store.bindings().items()):
             if not record.get("enabled"):
+                continue
+            if record.get("host") == "none" or record.get("passive"):
+                self._log(record, "binding.passive", host=record.get("host"), reason="resume-skip")
                 continue
             try:
                 self._start(record, reason="resume")
@@ -215,6 +229,52 @@ class BindingManager:
             except Exception as exc:
                 logger.warning("inbox-wake: cannot resume binding %s: %s", key, exc)
         return started
+
+    def _demote_siblings(self, record: dict[str, Any]) -> list[str]:
+        """Mark the older bindings of the same inbox passive; keep at most N active."""
+        keep = max(1, int(self.config.max_bindings_per_inbox))
+        same = [
+            other
+            for other in self.store.bindings().values()
+            if other.get("sessionKey") != record.get("sessionKey")
+            and other.get("inboxId") == record.get("inboxId")
+            and str(other.get("apiBaseUrl") or "").rstrip("/")
+            == str(record.get("apiBaseUrl") or "").rstrip("/")
+        ]
+        same.sort(key=_recency_key, reverse=True)
+        demoted: list[str] = []
+        for other in same[keep - 1 :] if keep > 1 else same:
+            if other.get("passive"):
+                continue
+            other["passive"] = True
+            other["passiveReason"] = "superseded"
+            self._persist(other)
+            self._stop(other, reason="superseded")
+            self._log(other, "binding.passive", reason="superseded", inbox=other.get("inboxId"))
+            demoted.append(str(other.get("sessionKey")))
+        return demoted
+
+    def _prune_passive(self) -> None:
+        """Apply the per-inbox cap to whatever a previous process left behind (newest wins)."""
+        keep = max(1, int(self.config.max_bindings_per_inbox))
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for record in self.store.bindings().values():
+            if not record.get("enabled") or record.get("host") == "none":
+                continue
+            group = (
+                str(record.get("inboxId") or ""),
+                str(record.get("apiBaseUrl") or "").rstrip("/"),
+            )
+            groups.setdefault(group, []).append(record)
+        for records in groups.values():
+            records.sort(key=_recency_key, reverse=True)
+            for stale in records[keep:]:
+                if stale.get("passive"):
+                    continue
+                stale["passive"] = True
+                stale["passiveReason"] = "superseded"
+                self._persist(stale)
+                self._log(stale, "binding.passive", reason="superseded", inbox=stale.get("inboxId"))
 
     def _start(self, record: dict[str, Any], *, reason: str) -> None:
         from .sse import SseWorker  # imported lazily so tests can import this module standalone
@@ -336,6 +396,19 @@ class BindingManager:
         """Create (or replace) the binding for one session. Returns a public view or an error dict."""
         if not SESSION_KEY_RE.fullmatch(session_key or ""):
             return {"ok": False, "code": "NO_SESSION_KEY", "message": "无法确定当前会话的 session key"}
+        capability = self._current_inject_capability()
+        if capability == "none":
+            # A one-shot / worker process can never deliver a wake; binding there only creates a
+            # zombie that the next gateway resumes and re-injects into (one live agent per ghost).
+            return {
+                "ok": False,
+                "code": "NO_INJECT_HOST",
+                "message": (
+                    "当前宿主进程不能投递唤醒（一次性/worker 进程）：请在 gateway、TUI/桌面、"
+                    "api_server 或常驻 messaging 会话里绑定"
+                ),
+            }
+
         existing = self.store.get_binding(session_key)
         if existing is None and len(self.store.bindings()) >= self.config.max_bindings:
             return {
@@ -395,6 +468,7 @@ class BindingManager:
             label=str(pick("label", "")),
             session_id=str(pick("sessionId", session_key)),
         )
+        record["host"] = capability
         if existing:
             record["lastEventId"] = str(existing.get("lastEventId") or "")
             record["lastObservedRevision"] = int(existing.get("lastObservedRevision") or 0)
@@ -404,7 +478,15 @@ class BindingManager:
         self._persist(record)
         self._start(record, reason="bind")
         health = self._refresh_status(record)
-        self._log(record, "binding.bind", inbox=inbox_id, mode=wake_mode, channels=channels)
+        demoted = self._demote_siblings(record)
+        self._log(
+            record,
+            "binding.bind",
+            inbox=inbox_id,
+            mode=wake_mode,
+            channels=channels,
+            demoted=len(demoted),
+        )
         return {"ok": True, "binding": self._public(record), "status": health}
 
     def unbind(self, session_key: str) -> dict[str, Any]:
@@ -684,6 +766,12 @@ class BindingManager:
             return
         runtime = self._runtime.get(session_key)
         if runtime is None:
+            return
+        if record.get("passive"):
+            revision = int(record.get("lastObservedRevision") or 0)
+            if self._skip_logged.get(session_key) != revision:
+                self._skip_logged[session_key] = revision
+                self._log(record, "wake.skipped", reason="passive-binding", revision=revision)
             return
         if self._current_inject_capability() == "none":
             revision = int(

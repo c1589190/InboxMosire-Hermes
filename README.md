@@ -132,6 +132,7 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 | `debounceMs` | `300` | 事件去抖窗口 |
 | `pollSeconds` | `0` | 后端 `/events` 不发 `: ping` 心跳时的对账兜底（建议 30–60） |
 | `sseReadTimeoutSeconds` | = `heartbeatTimeoutSeconds`（45） | SSE 自己的读超时，别跟 `requestTimeoutMs` 混用 |
+| `maxBindingsPerInbox` | `1` | 同一 inbox 只保留 1 条活跃绑定，其余降级 `passive`；防止一次性会话留下僵尸绑定（一事件叫醒 N 个会话） |
 | `wakeRetrySeconds` | `15` | 本地会话被宿主拒收时的固定重试间隔，不进指数退避 |
 | `allow_gateway_injection`（`plugins.entries.inbox-wake.`） | — | 宿主侧授权，**必须显式 `true`** |
 
@@ -198,7 +199,8 @@ hermes plugins doctor persona-mode           # 0 tool(s), 2 hook(s)
 2. 后端 `/events` 若不发 `: ping` 心跳，SSE 会被判超时重连 → 设 `pollSeconds` 兜底，或让后端加心跳。
 3. `hermes gateway restart` 在有活跃会话时会挂住/被拒：用 `hermes gateway stop --yes` 再 `run`，并**轮询确认已停**再启动（否则新进程只打印 "already serves profile 'default'" 就退出）。
 4. MCP 服务 keepalive 抖动（`MCPError: Session terminated`）会让业务工具在新会话里缺席，重启 gateway 后重新注册。
-5. 人设门禁的两个 QQ 工具名在本机不存在，真机拦截用例为 `NOT_RUN`（仅单测覆盖）。
+5. 一次性/CLI 进程**不能**建立绑定（`NO_INJECT_HOST`）：它们投递不了唤醒，绑定只会变成僵尸。
+6. 人设门禁的两个 QQ 工具名在本机不存在，真机拦截用例为 `NOT_RUN`（仅单测覆盖）。
 
 ---
 

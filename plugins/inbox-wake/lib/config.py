@@ -52,6 +52,9 @@ class Config:
     wake_backoff_max_ms: int = 900000
     request_timeout_ms: int = 10000
     max_bindings: int = 8
+    #: 每个 (apiUrl, inboxId) 只保留这么多个**活跃**绑定；多的降级成 passive（不订阅、不唤醒）。
+    #: 僵尸来源：每次 one-shot / CLI 会话都可能 autoBind 一条，会话结束后没人解绑。
+    max_bindings_per_inbox: int = 1
     pending_ttl_seconds: int = 600
     # A local (classic REPL / desktop) session is only *live* inside the gateway while a
     # turn is running, so an idle wake there is refused for reasons the item cannot fix.
@@ -169,7 +172,7 @@ class Config:
             "summaryMaxTotalChars", "wakeContent", "wakeContentMaxChars",
             "wakeContentTotalChars", "debounceMs", "heartbeatTimeoutSeconds",
             "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs", "wakeRetrySeconds",
-            "requestTimeoutMs", "maxBindings", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
+            "requestTimeoutMs", "maxBindings", "maxBindingsPerInbox", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
         ):
             if not callable(get):
                 break

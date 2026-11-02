@@ -224,6 +224,7 @@ hermes plugins enable inbox-wake
 | 收不到唤醒 | `allow_gateway_injection`；gateway.log 有没有 `injection admitted` | 开开关；`not routed` 表示会话已死，删绑定 |
 | 唤醒太频繁 | `/inbox log` 的 `wake.ok` 间隔 | 调大 `debounceMs`、用 `channels` 过滤、`restSeconds` 静默 |
 | `programMcp: missing` | `hermes mcp test inbox` | 挂 `mcp_servers.inbox`（见 §2.3） |
+| 一个事件叫醒好几个会话 / 机器上突然跑了多个 agent | `python3 -c` 读 `state.json` 看 `bindings` 条数与 `createdAt` | 僵尸绑定：每次一次性/CLI 会话 autoBind 都会留一条。设 `maxBindingsPerInbox`（默认 1）后重启 gateway 即自动裁剪；手工清：停 gateway 后把 `bindings` 置 `{}`（先备份），下次会话 autoBind 只建一条 |
 | `/inbox log` 里 `wake.deferred reason=no-live-session` | `gateway.log` 的 `is not a live local session of the plugin's profile home …` | 目标 local 会话此刻不活跃（经典 REPL 只在 turn 运行中才是 live session）。插件按 `wakeRetrySeconds` 固定重试，不烧退避；要**空闲时**被唤醒，见 §7.2 |
 | 每轮刷 `config_keys entry 'x' must be a dotted path at least two levels deep; skipping` | — | 已知 manifest 缺陷（裸驼峰键），不影响 settings 生效 |
 | 会话卡住/一直转圈 | `~/.hermes/logs/gateway.log` 里 `APIConnectionError` / 长耗时工具 | 见 §7.1 |

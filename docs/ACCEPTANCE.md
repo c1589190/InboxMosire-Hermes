@@ -134,6 +134,20 @@
 - ⬜ L9 真机「空闲时被唤醒」只在 live-session 宿主成立（`hermes --tui` / 桌面 / api_server / 常驻 messaging）；经典 REPL 空闲态收不到（宿主规则，插件无法绕过）→ `NOT_RUN`（待 TUI 复测）
 - ✅ L10 能力探测覆盖 TUI/桌面宿主：`manager.has_tui_message_injector` → `inject: tui`（`hermes_cli/plugins_injection.py` 的 keyed 路由先问 TUI 槽、命中即排队，未命中再落到 messaging gateway）。漏掉这一路会让 TUI 也被判成 `none` 并跳过唤醒（`tests/test_inbox_register.py::HostCapabilityTests`、`tests/test_inbox_binding.py::InjectHostTests::test_tui_host_delivers_like_the_gateway`）
 
+## M. 绑定卫生：一次性会话不能留下僵尸（2026-11-02 新增）
+
+真机事故：本机 `state.json` 累积了 6 条 `inbox=iibot-bot` 的绑定，全部 `sse=open`、`lastWake.ok=true`；
+gateway 一启动 `resume_all()` 就把 6 个历史会话（`source=oneshot`，来自 `hermes -z` 探针）一起复活，
+一条 inbox 事件 → 6 个会话各跑一轮（5 分钟 458 条消息）。
+
+- ✅ M1 不能投递的宿主（`inject: none`，即一次性/worker 进程）**拒绝建立绑定**：`bind()` 返回
+  `{"ok": false, "code": "NO_INJECT_HOST"}`，不再落盘（`tests/test_inbox_binding.py::PassiveBindingTests::test_bind_refuses_a_host_that_cannot_deliver`）
+- ✅ M2 绑定记录带 `host`（`tui` / `gateway` / `cli` / `unknown`），`resume_all()` 跳过 `host=none` 的历史绑定
+- ✅ M3 `maxBindingsPerInbox`（默认 1）：`resume_all()` **先裁剪再启动**，同一 `(apiUrl, inboxId)` 只保留最新一条活跃，其余标 `passive` + `binding.passive reason=superseded`
+- ✅ M4 新绑定成功时把同 inbox 的旧绑定降级（`binding.bind … demoted=N`）
+- ✅ M5 `passive` 绑定永不唤醒：`wake.skipped reason=passive-binding`（同一 revision 只记一次）
+- ⬜ M6 真机复测：清理现有 6 条僵尸后重启 gateway，确认只剩 1 条活跃、`/inbox status` 显示 `inject: tui` 或 `gateway` → `NOT_RUN`（待用户重启）
+
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 
 ### Z.1 环境与安装

@@ -96,6 +96,70 @@ class Base(unittest.TestCase):
         self.manager._maybe_wake(KEY, reason)
 
 
+class PassiveBindingTests(Base):
+    """One event must not fan out into one agent per ghost session."""
+
+    def _record(self, key: str, *, host: str = "tui", updated: str = "2026-11-02T22:00:00Z",
+                inbox: str = "main") -> dict:
+        record = binding_mod.new_record(
+            session_key=key,
+            inbox_id=inbox,
+            api_base_url="http://127.0.0.1:18765",
+            token_ref="file:/tmp/inbox.token",
+            channels=[],
+            wake_mode="view-ack",
+            wake_profile="generic",
+            session_id=key.split(":")[-1],
+        )
+        record["host"] = host
+        record["updatedAt"] = updated
+        self.store.put_binding(key, record)
+        self.manager._runtime_for(key)
+        return record
+
+    def test_bind_refuses_a_host_that_cannot_deliver(self):
+        self.manager.set_inject_capability("none")
+        result = self.manager.bind(KEY, {"inboxId": "main"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "NO_INJECT_HOST")
+        self.assertIsNone(self.store.get_binding(KEY))
+
+    def test_resume_prunes_ghost_sessions_to_the_newest(self):
+        keys = [f"agent:main:local:dm:local-{i:04d}" for i in range(3)]
+        for index, key in enumerate(keys):
+            self._record(key, updated=f"2026-11-02T22:0{index}:00Z")
+        started = self.manager.resume_all()
+        self.assertEqual(started, 1)
+        active = [k for k in keys if not (self.store.get_binding(k) or {}).get("passive")]
+        self.assertEqual(active, [keys[-1]])
+        events = [entry.get("event") for entry in self.store.ops().get(keys[0], [])]
+        self.assertIn("binding.passive", events)
+
+    def test_resume_skips_bindings_made_by_a_dead_host(self):
+        ghost = self._record("agent:main:local:dm:local-ghost", host="none")
+        self.assertEqual(self.manager.resume_all(), 0)
+        self.assertIn("binding.passive", [e.get("event") for e in self.store.ops().get(ghost["sessionKey"], [])])
+
+    def test_passive_binding_never_wakes(self):
+        record = self._record(KEY)
+        record["passive"] = True
+        self.store.put_binding(KEY, record)
+        self.fake.status_payload = {"revision": 4, "available": 2}
+        self.wake()
+        self.assertEqual(self.injected, [])
+        events = [entry.get("event") for entry in self.store.ops().get(KEY, [])]
+        self.assertEqual(events.count("wake.skipped"), 1)
+        self.assertNotIn("wake.ok", events)
+
+    def test_bind_demotes_an_older_binding_of_the_same_inbox(self):
+        self.manager.set_inject_capability("tui")
+        old = self._record("agent:main:local:dm:local-old", updated="2026-11-02T21:00:00Z")
+        new = self._record("agent:main:local:dm:local-new", updated="2026-11-02T22:00:00Z")
+        self.manager._demote_siblings(new)
+        self.assertTrue((self.store.get_binding(old["sessionKey"]) or {}).get("passive"))
+        self.assertFalse((self.store.get_binding(new["sessionKey"]) or {}).get("passive"))
+
+
 class WakeDecisionTests(Base):
     def test_wakes_once_per_revision(self):
         self.seed()

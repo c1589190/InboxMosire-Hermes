@@ -45,7 +45,7 @@
 返回 `{"ok": true, "sessionKey": …, "binding": {…}, "status": {…}}`；失败返回
 `{"ok": false, "code": "…", "message": …}`（`NO_SESSION_KEY` / `INVALID_ARGUMENT` /
 `TOKEN_MISSING` / `TOKEN_INLINE_FORBIDDEN` / `TOKEN_FILE_PERMISSIONS` / `TOKEN_UNREADABLE` /
-`TOO_MANY_BINDINGS`）——不抛异常、不回显 token。
+`NO_INJECT_HOST`（当前宿主进程不能投递唤醒）、`TOO_MANY_BINDINGS`）——不抛异常、不回显 token。
 
 
 `inboxId`/`channels`/`apiBaseUrl` 一律用 `SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/` 校验。
@@ -102,6 +102,7 @@ start_failed, stopped, rest}`。
 | `debounceMs` | int | `300` | SSE 事件去抖窗口 |
 | `heartbeatTimeoutSeconds` | int | `45` | SSE 静默判死的默认值（作为 `sseReadTimeoutSeconds` 的缺省） |
 | `sseReadTimeoutSeconds` | int | = `heartbeatTimeoutSeconds` | **SSE 长连接自己的读超时**（10–1800）。不要跟 `requestTimeoutMs` 混用：后者是一问一答的预算，用在 SSE 上会把健康的静默流当成断线（旧版 bug） |
+| `maxBindingsPerInbox` | int | `1` | 同一个 `(apiBaseUrl, inboxId)` 只保留这么多**活跃**绑定；多余的降级成 `passive`（不订阅、不唤醒，`/inbox log` 里是 `binding.passive`）。防止每次一次性会话 autoBind 出一条僵尸绑定，导致一个事件叫醒 N 个会话 |
 | `wakeRetrySeconds` | int | `15` | 本地会话（`agent:*:local:*`）被宿主拒收时的**固定**重试间隔（5–300）。它不进 `wakeBackoffBaseMs` 阶梯：本地会话只在 turn 运行中是 live session，空闲被拒不代表条目有问题 |
 | `pollSeconds` | int | `0` | 对账轮询：每隔 N 秒 `GET /status` 比 revision 并走同一条唤醒决策（`reason=poll`）。`0`=关闭。后端 `/events` 不发 `: ping` 心跳时设 30–60，唤醒正确性就不再依赖 SSE |
 | `requestTimeoutMs` | int | `10000` | 单次 HTTP |
