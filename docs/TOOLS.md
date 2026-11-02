@@ -100,7 +100,9 @@ start_failed, stopped, rest}`。
 | `summaryMaxItems` | int | `3` | 夹到 1–3 |
 | `wakeContent` | `off` \| `bounded` | `bounded` | 是否附带 item 正文（不可信数据） |
 | `debounceMs` | int | `300` | SSE 事件去抖窗口 |
-| `heartbeatTimeoutSeconds` | int | `45` | SSE 静默判死 |
+| `heartbeatTimeoutSeconds` | int | `45` | SSE 静默判死的默认值（作为 `sseReadTimeoutSeconds` 的缺省） |
+| `sseReadTimeoutSeconds` | int | = `heartbeatTimeoutSeconds` | **SSE 长连接自己的读超时**（10–1800）。不要跟 `requestTimeoutMs` 混用：后者是一问一答的预算，用在 SSE 上会把健康的静默流当成断线（旧版 bug） |
+| `pollSeconds` | int | `0` | 对账轮询：每隔 N 秒 `GET /status` 比 revision 并走同一条唤醒决策（`reason=poll`）。`0`=关闭。后端 `/events` 不发 `: ping` 心跳时设 30–60，唤醒正确性就不再依赖 SSE |
 | `requestTimeoutMs` | int | `10000` | 单次 HTTP |
 | `maxBindings` | int | `8` | 进程内绑定上限 |
 

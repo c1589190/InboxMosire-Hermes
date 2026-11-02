@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -28,6 +30,7 @@ class FakeClient:
         self.items_error: client_mod.InboxError | None = None
         self.status_error: client_mod.InboxError | None = None
         self.occupancy: list[tuple] = []
+        self.event_timeouts: list = []
 
     def status(self, inbox_id: str) -> dict:
         if self.status_error:
@@ -46,7 +49,8 @@ class FakeClient:
     def delete_occupancy(self, inbox_id: str, session_ref: str) -> None:
         self.occupancy.append(("delete", session_ref))
 
-    def open_events(self, inbox_id: str, *, last_event_id: str = ""):
+    def open_events(self, inbox_id: str, *, last_event_id: str = "", timeout=None):
+        self.event_timeouts.append(timeout)
         return iter(())
 
 
@@ -415,3 +419,63 @@ class AutoBindTests(Base):
         second = self.store.get_binding(KEY)
         self.assertEqual(first["createdAt"], second["createdAt"])
         self.assertEqual(len(self.fake.occupancy), 1)
+
+
+class SseTimeoutTests(unittest.TestCase):
+    """The SSE socket must not inherit the short request/response timeout."""
+
+    def test_worker_passes_its_own_read_timeout(self):
+        sse_mod = _loader.inbox_lib("sse")
+        seen: list = []
+
+        class Flaky:
+            def open_events(self, inbox_id, *, last_event_id="", timeout=None):
+                seen.append(timeout)
+                raise client_mod.InboxError("SSE_DOWN", "boom", status=503)
+
+        stop = threading.Event()
+        worker = sse_mod.SseWorker(
+            client=Flaky(),
+            inbox_id="main",
+            last_event_id="",
+            on_event=lambda *a: None,
+            on_state=lambda *a: None,
+            stop_event=stop,
+            reconnect_base_ms=100,
+            reconnect_max_ms=100,
+            read_timeout_seconds=7.5,
+        )
+        worker.start()
+        try:
+            deadline = time.time() + 2.0
+            while not seen and time.time() < deadline:
+                time.sleep(0.02)
+        finally:
+            stop.set()
+            worker.join(2)
+        self.assertTrue(seen, "worker 应该调用 open_events")
+        self.assertEqual(seen[0], 7.5)
+
+
+class PollReconcileTests(Base):
+    """Backends whose /events never sends a heartbeat still get woken by the poll fallback."""
+
+    def test_poll_wakes_without_any_sse_event(self):
+        self.config.poll_seconds = 1
+        self.config.sse_read_timeout_seconds = 600
+        record = self.seed()
+        self.manager._start(record, reason="test")
+        self.fake.status_payload = {"revision": 5, "available": 1}
+        deadline = time.time() + 4.0
+        while time.time() < deadline and not self.injected:
+            time.sleep(0.05)
+        self.assertTrue(self.injected, "pollSeconds 到点应触发一次唤醒")
+        self.assertIn("revision=5", self.injected[0][0])
+        record = self.store.get_binding(KEY)
+        self.assertEqual(record["lastWokenRevision"], 5)
+
+    def test_poll_disabled_by_default(self):
+        self.seed()
+        self.assertEqual(self.config.poll_seconds, 0)
+        self.manager._start(self.store.get_binding(KEY), reason="test")
+        self.assertIsNone(self.manager._poll_thread)

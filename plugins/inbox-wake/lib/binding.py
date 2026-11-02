@@ -104,6 +104,9 @@ class BindingManager:
         self._runtime: dict[str, Runtime] = {}
         self._autobind_attempted: set[str] = set()
         self._clients: dict[str, InboxClient] = {}
+        self._shutdown = threading.Event()
+        self._poll_lock = threading.Lock()
+        self._poll_thread: Optional[threading.Thread] = None
 
     # ---- helpers --------------------------------------------------------
 
@@ -200,6 +203,7 @@ class BindingManager:
             stop_event=stop,
             reconnect_base_ms=self.config.reconnect_base_ms,
             reconnect_max_ms=self.config.reconnect_max_ms,
+            read_timeout_seconds=float(self.config.sse_read_timeout_seconds),
         )
         # Occupancy is advisory (lease + wake-adapter contract): a failure is logged, never fatal.
         try:
@@ -212,9 +216,42 @@ class BindingManager:
         with runtime.lock:
             runtime.thread = worker
         worker.start()
+        self._ensure_poll()
         record["health"]["sse"] = "connecting"
         self._persist(record)
         self._log(record, "binding.start", reason=reason, inbox=record["inboxId"])
+
+    def _ensure_poll(self) -> None:
+        """Start the reconcile loop once (only when ``pollSeconds`` > 0)."""
+        seconds = int(self.config.poll_seconds or 0)
+        if seconds <= 0:
+            return
+        with self._poll_lock:
+            if self._poll_thread is not None and self._poll_thread.is_alive():
+                return
+            self._shutdown.clear()
+            thread = threading.Thread(
+                target=self._poll_loop, name="inbox-wake-poll", daemon=True
+            )
+            self._poll_thread = thread
+        thread.start()
+
+    def _poll_loop(self) -> None:
+        """GET /status on a timer and run the very same wake decision.
+
+        This is the normalisation layer for backends whose ``/events`` stream never sends a
+        ``: ping`` heartbeat comment (SSE liveness then cannot be proven, but revisions can).
+        """
+        interval = max(1, int(self.config.poll_seconds or 0))
+        while not self._shutdown.wait(interval):
+            for key in list(self.store.bindings().keys()):
+                record = self.store.get_binding(key)
+                if record is None or not record.get("enabled"):
+                    continue
+                try:
+                    self._maybe_wake(key, "poll")
+                except Exception as exc:  # a single bad inbox must not kill the loop
+                    logger.warning("inbox-wake: poll reconcile failed for %s: %s", key, exc)
 
     def _stop(self, record: dict[str, Any], *, reason: str) -> None:
         key = record["sessionKey"]
@@ -238,6 +275,10 @@ class BindingManager:
 
     def shutdown(self) -> None:
         """Stop every worker (plugin unload / gateway shutdown)."""
+        self._shutdown.set()
+        thread = self._poll_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.2)
         with self._lock:
             keys = list(self._runtime)
         for key in keys:
@@ -402,7 +443,10 @@ class BindingManager:
         with runtime.lock:
             runtime.turn_running = True
             alive = runtime.thread is not None and runtime.thread.is_alive()
-        if alive:
+            suspended = runtime.suspended
+        # A suspended runtime may still be winding down; ``_start`` is allowed to replace it,
+        # and skipping the revive here would leave the session deaf for the whole turn.
+        if alive and not suspended:
             return
         record = self.store.get_binding(session_key)
         if record is None or not record.get("enabled"):

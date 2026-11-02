@@ -37,6 +37,7 @@ class SseWorker(threading.Thread):
         stop_event: threading.Event,
         reconnect_base_ms: int = 1000,
         reconnect_max_ms: int = 60000,
+        read_timeout_seconds: float = 45.0,
     ) -> None:
         super().__init__(name=f"inbox-wake-sse[{inbox_id}]", daemon=True)
         self.client = client
@@ -47,6 +48,8 @@ class SseWorker(threading.Thread):
         self.stop_event = stop_event
         self.reconnect_base_ms = max(100, int(reconnect_base_ms))
         self.reconnect_max_ms = max(self.reconnect_base_ms, int(reconnect_max_ms))
+        # Idle time tolerated on one SSE connection; must exceed the server's heartbeat cadence.
+        self.read_timeout_seconds = max(1.0, float(read_timeout_seconds))
 
     # ---- loop -----------------------------------------------------------
 
@@ -55,7 +58,11 @@ class SseWorker(threading.Thread):
         while not self.stop_event.is_set():
             self.on_state(STATE_CONNECTING, None)
             try:
-                response = self.client.open_events(self.inbox_id, last_event_id=self.last_event_id)
+                response = self.client.open_events(
+                    self.inbox_id,
+                    last_event_id=self.last_event_id,
+                    timeout=self.read_timeout_seconds,
+                )
             except InboxError as exc:
                 attempt += 1
                 self.on_state(STATE_RETRYING, f"{exc.code}: {exc}")

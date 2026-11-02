@@ -44,6 +44,8 @@ class Config:
     wake_content_total_chars: int = 12000
     debounce_ms: int = 300
     heartbeat_timeout_seconds: int = 45
+    sse_read_timeout_seconds: int = 45
+    poll_seconds: int = 0
     reconnect_base_ms: int = 1000
     reconnect_max_ms: int = 60000
     wake_backoff_base_ms: int = 30000
@@ -120,6 +122,16 @@ class Config:
         cfg.heartbeat_timeout_seconds = safe.coerce_int(
             get("heartbeatTimeoutSeconds"), 45, minimum=5, maximum=600
         )
+        # The SSE socket must NOT reuse requestTimeoutMs (short request/response budget):
+        # a quiet-but-healthy stream would be torn down every few seconds.
+        cfg.sse_read_timeout_seconds = safe.coerce_int(
+            get("sseReadTimeoutSeconds"),
+            cfg.heartbeat_timeout_seconds,
+            minimum=10,
+            maximum=1800,
+        )
+        # Optional reconcile poll: makes the wake path independent of SSE heartbeats.
+        cfg.poll_seconds = safe.coerce_int(get("pollSeconds"), 0, minimum=0, maximum=3600)
         cfg.reconnect_base_ms = safe.coerce_int(
             get("reconnectBaseMs"), 1000, minimum=100, maximum=60000
         )
@@ -150,7 +162,7 @@ class Config:
             "summaryMaxTotalChars", "wakeContent", "wakeContentMaxChars",
             "wakeContentTotalChars", "debounceMs", "heartbeatTimeoutSeconds",
             "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs",
-            "requestTimeoutMs", "maxBindings", "autoBind",
+            "requestTimeoutMs", "maxBindings", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
         ):
             if not callable(get):
                 break

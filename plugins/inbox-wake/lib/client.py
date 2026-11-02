@@ -217,7 +217,9 @@ class InboxClient:
                 return
             raise
 
-    def open_events(self, inbox_id: str, *, last_event_id: str = "") -> Any:
+    def open_events(
+        self, inbox_id: str, *, last_event_id: str = "", timeout: Optional[float] = None
+    ) -> Any:
         """Open the SSE stream; the caller owns the returned response object."""
         headers = self._headers(
             {"Accept": "text/event-stream", "Cache-Control": "no-cache, no-store"}
@@ -228,7 +230,7 @@ class InboxClient:
             self._url(self._inbox_path(inbox_id, "/events")), headers=headers, method="GET"
         )
         try:
-            return urllib.request.urlopen(request, timeout=self.timeout_seconds)
+            return urllib.request.urlopen(request, timeout=timeout or self.timeout_seconds)
         except urllib.error.HTTPError as exc:
             code, message = _error_from_body(exc)
             raise InboxError(code, message, status=exc.code) from None

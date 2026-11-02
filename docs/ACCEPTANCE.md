@@ -121,6 +121,15 @@
 - ✅ K7 `kit/kit.sh doctor|status|down` 可用；`status` 不打印任何 token 值
 - 🟡 K8 iibot（`mcp_servers.iibot`）挂载路径已实现（token 从 `~/.config/iibot/control.env` 的 `IIBOT_CONTROL_TOKEN` 落盘 0600），本轮未接真 bot 验证 → `NOT_RUN`
 
+## L. SSE 读超时与对账轮询（2026-11-02 新增）
+
+- ✅ L1 SSE 连接使用独立读超时 `sseReadTimeoutSeconds`，不再复用 `requestTimeoutMs`（`tests/test_inbox_binding.py::SseTimeoutTests`；旧版 `client.py` 用 `timeout_seconds`=10s 导致静默流每 10 秒被判 `heartbeat timeout` 重连）
+- ✅ L2 `pollSeconds` >0 时，即使完全没有 SSE 事件，定时 `GET /status` 也能触发唤醒（`tests/test_inbox_binding.py::PollReconcileTests`）
+- ✅ L3 `pollSeconds` 默认 `0`（关闭），不改变既有行为
+- ✅ L4 `on_turn_start` 复活 worker 不再被"旧线程仍在收尾"挡住（竞态，单跑 5 次曾挂 3 次；修复后 89 用例连跑 3 次全绿）
+- 🟡 L5 真机：对 iiBot（`/events` 不发心跳）设 `pollSeconds=60` + `sseReadTimeoutSeconds=600` 后，`sse.retry` 停摆、唤醒由 poll 兜底 → 见 Z 段真机记录
+- ⬜ L6 后端侧建议（真正的根）：iiBot 的 `/events` 每 10–15s 发 `: ping\n\n` 注释；InboxMosire 已是该行为，iiBot 尚未 → `NOT_RUN`
+
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 
 ### Z.1 环境与安装
