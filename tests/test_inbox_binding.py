@@ -239,6 +239,19 @@ class InjectHostTests(Base):
         self.assertEqual((record.get("wake") or {}).get("attempts") or 0, 0)
         self.assertIn((record.get("wake") or {}).get("nextWakeAllowedAt"), (0, None))  # 未设退避
 
+    def test_tui_host_delivers_like_the_gateway(self):
+        """The Ink TUI / desktop backend owns its sessions, so a keyed wake goes through
+        ``inject_tui_session_message``; the plugin only needs to know it is not a worker."""
+        self.manager.set_inject_capability("tui")
+        record = self.seed()
+        self.fake.status_payload = {"revision": 7, "available": 1}
+        self.wake()
+        self.assertEqual(len(self.injected), 1)
+        self.assertEqual(int(record.get("lastWokenRevision") or 0), 7)
+        events = [entry.get("event") for entry in self.store.ops().get(KEY, [])]
+        self.assertEqual(events.count("wake.ok"), 1)
+        self.assertNotIn("wake.skipped", events)
+
     def test_probe_is_rechecked_on_every_wake(self):
         """The gateway publishes its injector *after* plugin discovery: a snapshot taken in
         register() says "none" for the one host that can actually deliver."""

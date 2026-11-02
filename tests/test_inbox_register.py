@@ -44,6 +44,60 @@ class FakeNetClient:
         return iter(())
 
 
+class HostCapabilityTests(unittest.TestCase):
+    """The probe decides whether a wake is even attempted; it must see every host slot."""
+
+    def _ctx(self, manager):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(_manager=manager)
+
+    def test_tui_host_is_recognised(self):
+        from types import SimpleNamespace
+
+        cap = plugin._host_inject_capability(self._ctx(SimpleNamespace(has_tui_message_injector=True)))
+        self.assertEqual(cap, "tui")
+
+    def test_gateway_host_is_recognised(self):
+        from types import SimpleNamespace
+
+        cap = plugin._host_inject_capability(
+            self._ctx(SimpleNamespace(has_tui_message_injector=False, has_gateway_message_injector=True))
+        )
+        self.assertEqual(cap, "gateway")
+
+    def test_cli_ref_is_recognised(self):
+        from types import SimpleNamespace
+
+        cap = plugin._host_inject_capability(
+            self._ctx(SimpleNamespace(has_tui_message_injector=False, has_gateway_message_injector=False,
+                                      _cli_ref=object()))
+        )
+        self.assertEqual(cap, "cli")
+
+    def test_worker_process_is_none(self):
+        from types import SimpleNamespace
+
+        cap = plugin._host_inject_capability(
+            self._ctx(SimpleNamespace(has_tui_message_injector=False, has_gateway_message_injector=False,
+                                      _cli_ref=None))
+        )
+        self.assertEqual(cap, "none")
+
+    def test_missing_manager_is_unknown(self):
+        from types import SimpleNamespace
+
+        self.assertEqual(plugin._host_inject_capability(SimpleNamespace()), "unknown")
+
+    def test_broken_manager_is_unknown_not_none(self):
+        class Boom:
+            @property
+            def has_tui_message_injector(self):
+                raise RuntimeError("boom")
+
+        self.assertEqual(plugin._host_inject_capability(self._ctx(Boom())), "unknown")
+
+
 class RegisterTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

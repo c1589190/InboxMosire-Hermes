@@ -132,6 +132,7 @@
 - ✅ L7 宿主能力探测**每次唤醒动态求值**（`BindingManager._current_inject_capability`）：gateway 在 `run_startup.py:1113` 发现插件、`:1741` 才装 message injector，register 时刻的快照必然是 `none`（`tests/test_inbox_binding.py::InjectHostTests::test_probe_is_rechecked_on_every_wake`）
 - ✅ L8 本地会话（`agent:*:local:*`）被宿主拒收时记 `wake.deferred reason=no-live-session` 并按 `wakeRetrySeconds`（默认 15s）**固定**重试，不累加 `wake.attempts`、不进 30s→900s 退避阶梯（`tests/test_inbox_binding.py::LocalSessionDeferTests`）；messaging/api_server 会话的失败仍是 `wake.failed` + 退避
 - ⬜ L9 真机「空闲时被唤醒」只在 live-session 宿主成立（`hermes --tui` / 桌面 / api_server / 常驻 messaging）；经典 REPL 空闲态收不到（宿主规则，插件无法绕过）→ `NOT_RUN`（待 TUI 复测）
+- ✅ L10 能力探测覆盖 TUI/桌面宿主：`manager.has_tui_message_injector` → `inject: tui`（`hermes_cli/plugins_injection.py` 的 keyed 路由先问 TUI 槽、命中即排队，未命中再落到 messaging gateway）。漏掉这一路会让 TUI 也被判成 `none` 并跳过唤醒（`tests/test_inbox_register.py::HostCapabilityTests`、`tests/test_inbox_binding.py::InjectHostTests::test_tui_host_delivers_like_the_gateway`）
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

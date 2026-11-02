@@ -33,13 +33,20 @@ _EMOJI = {
 
 
 def _host_inject_capability(ctx: Any) -> str:
-    """Which host this process is. Only a live gateway or the classic CLI REPL can deliver an
-    injected wake; one-shot/worker processes load the plugin too and must not burn the shared
-    backoff with attempts they can never win (``inject_message: no live gateway is available``)."""
+    """Which host this process is — asked again on every wake, never cached at register time.
+
+    ``hermes_cli/plugins_injection.py`` routes a keyed wake in this order: CLI queue (only when
+    ``_cli_ref`` is set, which the CLI front-ends never do — PLG-7), the TUI/desktop host
+    (``has_tui_message_injector``, accepts only sessions it owns), then the messaging gateway
+    (``has_gateway_message_injector``). One-shot / worker processes load the plugin too and own
+    none of these; they must not burn the shared backoff with attempts they can never win.
+    """
     manager = getattr(ctx, "_manager", None)
     if manager is None:
         return "unknown"
     try:
+        if bool(getattr(manager, "has_tui_message_injector", False)):
+            return "tui"
         if bool(getattr(manager, "has_gateway_message_injector", False)):
             return "gateway"
         if getattr(manager, "_cli_ref", None) is not None:
