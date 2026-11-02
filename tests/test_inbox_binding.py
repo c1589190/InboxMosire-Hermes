@@ -251,6 +251,24 @@ class SessionLifecycleTests(Base):
         self.manager.on_session_gone(KEY, reason="session-end")
         self.assertEqual(self.store.get_binding(KEY)["health"]["sse"], "suspended")
 
+    def test_sse_event_updates_cursor_and_arms_debounce(self):
+        """Regression: _on_event used to raise TypeError (_log() got multiple values for
+        argument 'event'), which killed every SSE-driven wake on the real host."""
+        self.seed()
+        self.fake.status_payload = {"revision": 2, "available": 1}
+        self.manager._on_event(KEY, "7", {"event": "inbox.updated", "data": {"revision": 2}})
+        record = self.store.get_binding(KEY)
+        self.assertEqual(record["lastEventId"], "7")
+        runtime = self.manager._runtime_for(KEY)
+        self.assertIsNotNone(runtime.timer)  # debounce timer armed → handler did not blow up
+        runtime.timer.cancel()
+        self.wake("event")
+        self.assertEqual(len(self.injected), 1)
+        self.assertIn("revision=2", self.injected[0][0])
+        events = [entry.get("event") for entry in self.store.ops().get(KEY, [])]
+        self.assertIn("sse.event", events)
+        self.assertIn("wake.ok", events)
+
     def test_lookup_by_session_id(self):
         self.seed()
         self.assertEqual(self.manager.by_session_id(SID), KEY)

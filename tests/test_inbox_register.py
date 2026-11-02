@@ -82,7 +82,10 @@ class RegisterTests(unittest.TestCase):
             self.assertEqual(entry["schema"]["name"], entry["name"])
             self.assertIn("parameters", entry["schema"])
         self.assertIn("inbox", self.ctx.commands)
-        for hook in ("pre_llm_call", "post_llm_call", "post_tool_call", "on_session_end", "on_session_reset", "on_session_delete"):
+        for hook in (
+            "pre_llm_call", "post_llm_call", "post_tool_call",
+            "on_session_end", "on_session_reset", "on_session_delete", "on_session_finalize",
+        ):
             self.assertEqual(len(self.ctx.hooks[hook]), 1, hook)
         self.assertIsNotNone(self.ctx.unload)
 
@@ -147,6 +150,30 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual(status["binding"]["health"]["turn"], "idle")
         plugin._on_session_gone(session_key=KEY)
         self.assertEqual(self.call("inbox_adapter_status", {}, session_key=KEY)["binding"]["health"]["sse"], "suspended")
+
+    def test_session_end_is_per_turn_and_does_not_suspend(self):
+        """Hermes fires ``on_session_end`` after every turn (hermes_cli/lifecycle.py): a wake adapter
+        must read it as "turn finished", not "session died", or its SSE worker stops after turn one."""
+        self.call(
+            "inbox_adapter_bind", {"inboxId": "main", "adapterTokenRef": f"file:{self.token_path}"},
+            session_key=KEY,
+        )
+        self.ctx.hooks["on_session_end"][0](session_key=KEY)
+        status = self.call("inbox_adapter_status", {}, session_key=KEY)
+        self.assertNotEqual(status["binding"]["health"]["sse"], "suspended")
+        self.assertEqual(status["binding"]["health"]["turn"], "idle")
+
+    def test_turn_start_revives_a_suspended_worker(self):
+        self.call(
+            "inbox_adapter_bind", {"inboxId": "main", "adapterTokenRef": f"file:{self.token_path}"},
+            session_key=KEY,
+        )
+        plugin._on_session_gone(session_key=KEY)
+        status = self.call("inbox_adapter_status", {}, session_key=KEY)
+        self.assertEqual(status["binding"]["health"]["sse"], "suspended")
+        plugin._on_pre_llm_call(session_key=KEY)
+        status = self.call("inbox_adapter_status", {}, session_key=KEY)
+        self.assertNotEqual(status["binding"]["health"]["sse"], "suspended")
 
     def test_inject_hint_when_host_refuses(self):
         refusing = _loader.FakeCtx(accept_injection=False)

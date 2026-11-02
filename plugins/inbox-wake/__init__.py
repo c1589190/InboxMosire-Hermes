@@ -90,12 +90,27 @@ def _on_post_tool_call(**_kwargs: Any) -> None:
 
 
 def _on_session_gone(**_kwargs: Any) -> None:
+    """Session really went away (reset / delete / finalize): stop the worker, keep the binding."""
     if _manager is None:
         return
     key = _resolve_key(_kwargs)
     if key:
         _manager.on_session_gone(key, reason="session-ended")
     return None
+
+
+def _make_session_gone(reason: str):
+    """Bind the concrete lifecycle event into the log line (``session-reset`` / ``-deleted`` …)."""
+
+    def _handler(**_kwargs: Any) -> None:
+        if _manager is None:
+            return None
+        key = _resolve_key(_kwargs)
+        if key:
+            _manager.on_session_gone(key, reason=reason)
+        return None
+
+    return _handler
 
 
 def register(ctx: Any) -> None:
@@ -142,9 +157,19 @@ def register(ctx: Any) -> None:
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("post_llm_call", _on_post_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
-    ctx.register_hook("on_session_end", _on_session_gone)
-    ctx.register_hook("on_session_reset", _on_session_gone)
-    ctx.register_hook("on_session_delete", _on_session_gone)
+    # Hermes fires ``on_session_end`` at the end of *every turn* (hermes_cli/lifecycle.py: "on_session_end
+    # is per-turn and stays observer-only"), so it means "turn finished", never "session gone". Treating
+    # it as the latter stopped the SSE worker after the first turn and silenced every later wake.
+    ctx.register_hook("on_session_end", _on_post_llm_call)
+    for _hook, _reason in (
+        ("on_session_reset", "session-reset"),
+        ("on_session_delete", "session-deleted"),
+        ("on_session_finalize", "session-finalized"),
+    ):
+        try:
+            ctx.register_hook(_hook, _make_session_gone(_reason))
+        except Exception as exc:  # older hosts may not accept the newer hook names
+            logger.warning("inbox-wake: cannot register hook %s: %s", _hook, exc)
 
     unload = getattr(ctx, "on_unload", None)
     if callable(unload):

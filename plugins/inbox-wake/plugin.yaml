@@ -14,6 +14,7 @@ provides_hooks:
   - on_session_end
   - on_session_reset
   - on_session_delete
+  - on_session_finalize
 provides_tools:
   - inbox_adapter_status
   - inbox_adapter_bind

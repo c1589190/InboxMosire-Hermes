@@ -69,7 +69,7 @@
 | `$DSH_HOME/inbox-mosire/state.json`（0600，version 1，v1 迁移保留在 `legacyV1`） | `ctx.state`（`<HERMES_HOME>/plugin-data/inbox-wake/`），同字段、同 version 策略 | 🔁 |
 | `ops-log` 文件 + `readOps(sessionId, limit)` | ops log 存 `ctx.state` 环形缓冲（≤200/session），`inbox_adapter_log` 读 | 🔁 |
 | `agent/created`（startup/resume/clear/compact）→ 重建 binding | `on_session_start` 等价（含 resume）；状态文档按 session_key 恢复 | 🔁 |
-| `agent/disposed` / `workspace/session-stop` → 立即停 SSE、清占用 | `on_session_end` / `on_session_reset` / `on_session_delete` | 🔁 |
+| `agent/disposed` / `workspace/session-stop` → 立即停 SSE、清占用 | `on_session_reset` / `on_session_delete` / `on_session_finalize`（真·会话销毁）；**`on_session_end` 不算**——Hermes 的它每轮都触发（`hermes_cli/lifecycle.py:72`） | 🔁 |
 | `agent/turn-stopping`（serial） | 无对应；不需要（摘要唤醒不要求 turn 收尾） | ⚠️ 不使用 |
 | panel 挂载/卸载 → `resume`/`suspend` | 无 panel；不实现 | ❌ 桌面 UI 不做（用户明确不关心） |
 | WebUI inbox 面板（`client.js`/`lib/panel.js`） | 不做 | ❌ |
@@ -81,3 +81,12 @@
 - **已知差异**：6 项 ⚠️（system prompt 不能替换、无 preset 工具收窄、无 turn 状态事件、
   gateway 注入需显式授权、无幂等键、无 `turn-stopping`）。
 - **不做**：桌面面板/挂载态 suspend-resume（❌，用户明确不看 UI）。
+
+### 5.1 Hermes 宿主语义差异（2026-11-02 真机实测后追加）
+
+| 事件 | DSH 语义 | Hermes 实际语义 | 适配做法 |
+| --- | --- | --- | --- |
+| `on_session_end` | 会话结束（进 disposed） | **每轮 turn 结束都会触发**（payload 带 `turn_id`/`turn_exit_reason`） | 当作 turn 结束处理；不要再 suspend SSE |
+| `on_session_reset` / `on_session_delete` / `on_session_finalize` | 无直接对应 | 真正的会话销毁/重置边界 | suspend SSE，保留绑定，等 `retry`/下轮 `pre_llm_call` 复活 |
+| 插件 hooks/tools/`/command` 执行位置 | 插件跑在自己的 host 进程 | 全部跑在 **gateway 进程**（`hermes_cli/gateway_plugin_commands.py`） | 改代码/配置后必须重启 gateway |
+| `inject_message` 授权 | 无此门槛 | 需 `plugins.entries.<id>.allow_gateway_injection: true`，且 session 仍存活 | settings + 失败即回退成 `wake.failed` 退避 |

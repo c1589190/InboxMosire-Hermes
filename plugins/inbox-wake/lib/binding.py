@@ -130,9 +130,9 @@ class BindingManager:
         self.store.put_binding(record["sessionKey"], dict(record))
         return record
 
-    def _log(self, record: dict[str, Any], event: str, **fields: Any) -> None:
+    def _log(self, record: dict[str, Any], name: str, **fields: Any) -> None:
         try:
-            oplog.append(self.store, record["sessionKey"], event, **fields)
+            oplog.append(self.store, record["sessionKey"], name, **fields)
         except Exception as exc:  # logging must never break the wake path
             logger.debug("inbox-wake: ops log failed: %s", exc)
 
@@ -178,7 +178,13 @@ class BindingManager:
         key = record["sessionKey"]
         runtime = self._runtime_for(key)
         with runtime.lock:
-            if runtime.thread is not None and runtime.thread.is_alive():
+            # A suspended runtime may still be winding down; its worker already has ``stop`` set,
+            # so replacing it is safe and keeps the revive path free of timing races.
+            if (
+                runtime.thread is not None
+                and runtime.thread.is_alive()
+                and not runtime.suspended
+            ):
                 return
             runtime.suspended = False
             stop = threading.Event()
@@ -375,10 +381,28 @@ class BindingManager:
     # ---- turn state -----------------------------------------------------
 
     def on_turn_start(self, session_key: str) -> None:
+        """A turn began: mark the session busy and make sure the SSE worker is running.
+
+        Hermes' ``on_session_end`` is a per-turn hook (``hermes_cli/lifecycle.py``: "on_session_end
+        is per-turn and stays observer-only"), and the host fires it at the end of every turn. A
+        worker stopped by that event would otherwise stay dead until a manual ``/inbox retry``, so
+        revive it here instead of waiting for the operator.
+        """
         runtime = self._runtime.get(session_key)
-        if runtime is not None:
-            with runtime.lock:
-                runtime.turn_running = True
+        if runtime is None:
+            return
+        with runtime.lock:
+            runtime.turn_running = True
+            alive = runtime.thread is not None and runtime.thread.is_alive()
+        if alive:
+            return
+        record = self.store.get_binding(session_key)
+        if record is None or not record.get("enabled"):
+            return
+        try:
+            self._start(record, reason="turn-start")
+        except Exception as exc:  # a failed revive must never break the turn
+            logger.warning("inbox-wake: cannot restart worker for %s: %s", session_key, exc)
 
     def on_turn_end(self, session_key: str) -> None:
         runtime = self._runtime.get(session_key)
@@ -464,7 +488,7 @@ class BindingManager:
         runtime = self._runtime_for(session_key)
         runtime.last_event_at = self.clock()
         self._persist(record)
-        self._log(record, "sse.event", event=safe.clean_text(event.get("event"), 32))
+        self._log(record, "sse.event", kind=safe.clean_text(event.get("event"), 32))
         self._schedule(session_key, delay_ms=self.config.debounce_ms, reason="event")
 
     def _schedule(self, session_key: str, *, delay_ms: int, reason: str) -> None:
