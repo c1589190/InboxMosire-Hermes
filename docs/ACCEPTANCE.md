@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（86 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（103 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
