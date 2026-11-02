@@ -53,6 +53,10 @@ class Config:
     request_timeout_ms: int = 10000
     max_bindings: int = 8
     pending_ttl_seconds: int = 600
+    # A local (classic REPL / desktop) session is only *live* inside the gateway while a
+    # turn is running, so an idle wake there is refused for reasons the item cannot fix.
+    # Retry at this fixed short interval instead of climbing the shared backoff ladder.
+    wake_retry_seconds: int = 15
     auto_bind: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -144,6 +148,9 @@ class Config:
         cfg.wake_backoff_max_ms = safe.coerce_int(
             get("wakeBackoffMaxMs"), 900000, minimum=1000, maximum=3600000
         )
+        cfg.wake_retry_seconds = safe.coerce_int(
+            get("wakeRetrySeconds"), cfg.wake_retry_seconds, minimum=5, maximum=300
+        )
         cfg.request_timeout_ms = safe.coerce_int(
             get("requestTimeoutMs"), 10000, minimum=500, maximum=60000
         )
@@ -161,7 +168,7 @@ class Config:
             "wakeProfile", "summaryEnabled", "summaryMaxItems", "summaryMaxTitleChars",
             "summaryMaxTotalChars", "wakeContent", "wakeContentMaxChars",
             "wakeContentTotalChars", "debounceMs", "heartbeatTimeoutSeconds",
-            "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs",
+            "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs", "wakeRetrySeconds",
             "requestTimeoutMs", "maxBindings", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
         ):
             if not callable(get):

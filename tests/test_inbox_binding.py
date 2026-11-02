@@ -239,6 +239,25 @@ class InjectHostTests(Base):
         self.assertEqual((record.get("wake") or {}).get("attempts") or 0, 0)
         self.assertIn((record.get("wake") or {}).get("nextWakeAllowedAt"), (0, None))  # 未设退避
 
+    def test_probe_is_rechecked_on_every_wake(self):
+        """The gateway publishes its injector *after* plugin discovery: a snapshot taken in
+        register() says "none" for the one host that can actually deliver."""
+        states = ["none", "gateway"]
+        self.manager.set_inject_capability(
+            "none", probe=lambda: states.pop(0) if states else "gateway"
+        )
+        record = self.seed()
+        self.fake.status_payload = {"revision": 6, "available": 1}
+        self.wake()  # probe -> none: skipped, nothing injected
+        self.assertEqual(self.injected, [])
+        self.assertEqual(self.manager.inject_capability, "none")
+        self.wake()  # probe -> gateway: the same binding now wakes
+        self.assertEqual(len(self.injected), 1)
+        self.assertEqual(self.manager.inject_capability, "gateway")
+        events = [entry.get("event") for entry in self.store.ops().get(KEY, [])]
+        self.assertIn("wake.ok", events)
+        self.assertEqual(int(self.store.get_binding(KEY).get("lastWokenRevision") or 0), 6)
+
     def test_status_line_reports_inject_capability(self):
         commands_mod = _loader.inbox_lib("commands")
         self.manager.set_inject_capability("gateway")
@@ -248,6 +267,65 @@ class InjectHostTests(Base):
         self.assertIn("inject     : gateway", result)
         self.manager.set_inject_capability("none")
         self.assertIn("inject     : none", commands_mod.handle("status", self.manager, KEY))
+
+
+class LocalSessionDeferTests(Base):
+    """A refused wake into a *local* session says nothing about the item: the gateway only admits
+    keyed wakes into live local sessions, and a classic-REPL session is only live during a turn."""
+
+    LOCAL_KEY = "agent:main:local:dm:local-0123456789abcdef"
+    LOCAL_SID = "local-0123456789abcdef"
+
+    def _seed_local(self) -> dict:
+        record = binding_mod.new_record(
+            session_key=self.LOCAL_KEY,
+            inbox_id="main",
+            api_base_url="http://127.0.0.1:18765",
+            token_ref="file:/tmp/inbox.token",
+            channels=[],
+            wake_mode="claim",
+            wake_profile="generic",
+            session_id=self.LOCAL_SID,
+        )
+        self.store.put_binding(self.LOCAL_KEY, record)
+        self.manager._runtime_for(self.LOCAL_KEY)
+        return record
+
+    def test_is_local_session_key(self):
+        self.assertTrue(binding_mod._is_local_session_key(self.LOCAL_KEY))
+        self.assertFalse(binding_mod._is_local_session_key(KEY))
+
+    def test_refused_local_wake_defers_on_a_flat_retry(self):
+        self._seed_local()
+        self.inject_ok = False
+        self.inject_error = (
+            "注入被宿主拒绝：确认 config.yaml 里 plugins.entries.inbox-wake.allow_gateway_injection: "
+            "true，且该 session key 仍然存在"
+        )
+        self.fake.status_payload = {"revision": 9, "available": 1}
+        self.manager._maybe_wake(self.LOCAL_KEY, "event")
+        record = self.store.get_binding(self.LOCAL_KEY)
+        self.assertTrue(record["lastWake"]["deferred"])
+        self.assertFalse(record["lastWake"]["ok"])
+        self.assertEqual(int((record.get("wake") or {}).get("attempts") or 0), 0)
+        self.assertEqual(int(record["wake"]["nextWakeAllowedAt"]), int(self.now * 1000) + 15_000)
+        self.assertEqual(int(record.get("lastWokenRevision") or 0), 0)
+        events = [entry.get("event") for entry in self.store.ops().get(self.LOCAL_KEY, [])]
+        self.assertEqual(events.count("wake.deferred"), 1)
+        self.assertNotIn("wake.failed", events)
+
+    def test_refused_messaging_wake_still_backs_off(self):
+        self.seed()
+        self.inject_ok = False
+        self.fake.status_payload = {"revision": 9, "available": 1}
+        self.wake()
+        record = self.store.get_binding(KEY)
+        self.assertNotIn("deferred", record["lastWake"])
+        self.assertEqual(int(record["wake"]["attempts"]), 1)
+        self.assertEqual(int(record["wake"]["nextWakeAllowedAt"]), int(self.now * 1000) + 30_000)
+        events = [entry.get("event") for entry in self.store.ops().get(KEY, [])]
+        self.assertEqual(events.count("wake.failed"), 1)
+        self.assertNotIn("wake.deferred", events)
 
 
 class RestAndTtlTests(Base):

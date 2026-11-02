@@ -129,6 +129,9 @@
 - ✅ L4 `on_turn_start` 复活 worker 不再被"旧线程仍在收尾"挡住（竞态，单跑 5 次曾挂 3 次；修复后 89 用例连跑 3 次全绿）
 - 🟡 L5 真机：对 iiBot（`/events` 不发心跳）设 `pollSeconds=60` + `sseReadTimeoutSeconds=600` 后，`sse.retry` 停摆、唤醒由 poll 兜底 → 见 Z 段真机记录
 - ⬜ L6 后端侧建议（真正的根）：iiBot 的 `/events` 每 10–15s 发 `: ping\n\n` 注释；InboxMosire 已是该行为，iiBot 尚未 → `NOT_RUN`
+- ✅ L7 宿主能力探测**每次唤醒动态求值**（`BindingManager._current_inject_capability`）：gateway 在 `run_startup.py:1113` 发现插件、`:1741` 才装 message injector，register 时刻的快照必然是 `none`（`tests/test_inbox_binding.py::InjectHostTests::test_probe_is_rechecked_on_every_wake`）
+- ✅ L8 本地会话（`agent:*:local:*`）被宿主拒收时记 `wake.deferred reason=no-live-session` 并按 `wakeRetrySeconds`（默认 15s）**固定**重试，不累加 `wake.attempts`、不进 30s→900s 退避阶梯（`tests/test_inbox_binding.py::LocalSessionDeferTests`）；messaging/api_server 会话的失败仍是 `wake.failed` + 退避
+- ⬜ L9 真机「空闲时被唤醒」只在 live-session 宿主成立（`hermes --tui` / 桌面 / api_server / 常驻 messaging）；经典 REPL 空闲态收不到（宿主规则，插件无法绕过）→ `NOT_RUN`（待 TUI 复测）
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

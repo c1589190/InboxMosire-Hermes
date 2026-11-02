@@ -78,6 +78,12 @@ def handle(raw_args: str, manager: Any, session_key: str) -> Optional[str]:
 
 def _inject_capability(manager: Any) -> str:
     """Which host runs this manager; "none" means a wake here can never be delivered."""
+    probe = getattr(manager, "_current_inject_capability", None)
+    if callable(probe):
+        try:
+            return str(probe())
+        except Exception:
+            pass
     return str(getattr(manager, "inject_capability", "unknown"))
 
 
@@ -100,6 +106,7 @@ def _format_status(record: dict[str, Any], inject_capability: str = "unknown") -
         f" programMcp={health.get('programMcp')}",
         f"lastEventId: {record.get('lastEventId') or '-'}",
         f"lastWake   : {wake.get('at') or '-'} rev={wake.get('revision')} ok={wake.get('ok')}"
+        + (" deferred(等活跃会话)" if wake.get("deferred") else "")
         + (f" err={wake.get('error')}" if wake.get("error") else ""),
         f"summary    : {summary.get('state')} shown={summary.get('shown')} remaining={summary.get('remaining')}",
     ]

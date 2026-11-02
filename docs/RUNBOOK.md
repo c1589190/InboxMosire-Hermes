@@ -224,8 +224,22 @@ hermes plugins enable inbox-wake
 | 收不到唤醒 | `allow_gateway_injection`；gateway.log 有没有 `injection admitted` | 开开关；`not routed` 表示会话已死，删绑定 |
 | 唤醒太频繁 | `/inbox log` 的 `wake.ok` 间隔 | 调大 `debounceMs`、用 `channels` 过滤、`restSeconds` 静默 |
 | `programMcp: missing` | `hermes mcp test inbox` | 挂 `mcp_servers.inbox`（见 §2.3） |
+| `/inbox log` 里 `wake.deferred reason=no-live-session` | `gateway.log` 的 `is not a live local session of the plugin's profile home …` | 目标 local 会话此刻不活跃（经典 REPL 只在 turn 运行中才是 live session）。插件按 `wakeRetrySeconds` 固定重试，不烧退避；要**空闲时**被唤醒，见 §7.2 |
 | 每轮刷 `config_keys entry 'x' must be a dotted path at least two levels deep; skipping` | — | 已知 manifest 缺陷（裸驼峰键），不影响 settings 生效 |
 | 会话卡住/一直转圈 | `~/.hermes/logs/gateway.log` 里 `APIConnectionError` / 长耗时工具 | 见 §7.1 |
+
+### 7.2 谁能承接"空闲时被唤醒"（宿主差异，实测）
+
+`inject_message` 的可投递性由**宿主**决定，与配置无关：
+
+| 会话起法 | session key 形态 | 空闲时能收唤醒吗 | 原因 |
+|---|---|---|---|
+| `hermes chat --cli`（经典 REPL） | `agent:<profile>:local:dm:local-<hash>` | **不能**，只有该会话正在跑 turn 时才能 | gateway 只把 wake 投给 `authority.sessions[chat_id]` 里的 *live* local session（`gateway/run_plugin_injection.py:_plugin_local_session`），空闲 REPL 不在里面 |
+| `hermes --tui` / 桌面 / web | 同上 | **能** | TUI/desktop 自己发布 injector（`tui_gateway/plugin_inject.py:install_tui_message_injector`），按 `session_key` 认领，空闲时会把 wake 排进该会话的 prompt 队列并起一轮 |
+| api_server（`/v1/chat/completions` + `X-Hermes-Session-Key`） | `agent:<profile>:api_server:dm:api-<hash>` | **能** | 会话由 gateway 自己持有；本机实测可绑定并收 wake |
+| 常驻 messaging 平台（telegram/qq…） | `agent:<profile>:telegram:dm:<chat>` | **能** | 同上，走 adapter 投递 |
+
+其它宿主的拒收不会污染状态：local 会话的拒收记 `wake.deferred`（固定 `wakeRetrySeconds` 重试，不动 `attempts`/退避），其它会话的失败仍是 `wake.failed`（30s→900s 退避）。
 
 ### 7.1 「卡住」的三个常见来源（本机实测）
 

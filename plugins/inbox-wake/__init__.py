@@ -198,20 +198,25 @@ def register(ctx: Any) -> None:
     capability = _host_inject_capability(ctx)
     setter = getattr(manager, "set_inject_capability", None)
     if callable(setter):
-        setter(capability)
+        try:
+            # Probe, not snapshot: the gateway installs its message injector after plugin
+            # discovery, so a frozen "none" here would park the only host that can deliver.
+            setter(capability, probe=lambda: _host_inject_capability(ctx))
+        except TypeError:  # older manager signature
+            setter(capability)
+    if config.enabled and capability == "none":
+        logger.info(
+            "inbox-wake: this process cannot deliver a wake right now (inject=%s); its workers "
+            "will re-check the host on every wake attempt", capability,
+        )
 
     resumed = 0
-    if config.enabled and capability != "none":
+    if config.enabled:
         try:
             resumed = manager.resume_all()
         except Exception as exc:
             logger.warning("inbox-wake: resume failed: %s", exc)
-    elif config.enabled:
-        logger.info(
-            "inbox-wake: this process cannot deliver a wake (inject=%s); bindings stay parked "
-            "for the gateway to resume", capability,
-        )
     logger.info(
-        "inbox-wake: loaded (api=%s inbox=%s mode=%s profile=%s resumed=%d inject=%s)",
+        "inbox-wake: loaded (api=%s inbox=%s mode=%s profile=%s resumed=%d inject=%s@boot)",
         config.api_url, config.inbox_id, config.wake_mode, config.wake_profile, resumed, capability,
     )

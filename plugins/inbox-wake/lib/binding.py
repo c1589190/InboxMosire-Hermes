@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 SESSION_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 PROGRAM_MCP_TOOLS = ("inbox_list", "inbox_status")
 
+
+def _is_local_session_key(session_key: str) -> bool:
+    """``agent:<profile>:local:<chat_type>:<chat_id>`` — a session owned by a local viewer."""
+    parts = str(session_key or "").split(":")
+    return len(parts) >= 3 and parts[2] == "local"
+
 # Each runtime object is per-process only; everything durable lives in the binding record below.
 @dataclass
 class Runtime:
@@ -111,11 +117,36 @@ class BindingManager:
         # actually deliver an injected message. One-shot/worker processes load the plugin too
         # and must never burn the shared backoff with attempts they cannot win.
         self.inject_capability: str = "unknown"
+        # The gateway publishes its message injector *after* plugin discovery
+        # (gateway/run_startup.py: discover at :1113, _install_plugin_message_injector at :1741),
+        # so a value sampled at register() time is stale for the very host that can deliver
+        # wakes. Keep a probe and re-ask every time we are about to wake.
+        self.inject_probe: Optional[Callable[[], str]] = None
         self._skip_logged: dict[str, int] = {}
 
-    def set_inject_capability(self, capability: str) -> None:
-        """Record whether this process can deliver an injected wake ("gateway"/"cli"/"none")."""
+    def set_inject_capability(
+        self,
+        capability: str,
+        probe: Optional[Callable[[], str]] = None,
+    ) -> None:
+        """Record whether this process can deliver an injected wake ("gateway"/"cli"/"none").
+
+        ``probe`` (optional) is re-evaluated on every wake attempt; the frozen string is only the
+        fallback used when no probe is installed."""
         self.inject_capability = capability
+        self.inject_probe = probe
+
+    def _current_inject_capability(self) -> str:
+        """Ask the host right now — an injector may attach long after ``register()``."""
+        probe = self.inject_probe
+        if probe is None:
+            return self.inject_capability
+        try:
+            value = str(probe() or "unknown")
+        except Exception:  # a broken probe must never break the wake path
+            return "unknown"
+        self.inject_capability = value
+        return value
 
     # ---- helpers --------------------------------------------------------
 
@@ -654,7 +685,7 @@ class BindingManager:
         runtime = self._runtime.get(session_key)
         if runtime is None:
             return
-        if self.inject_capability == "none":
+        if self._current_inject_capability() == "none":
             revision = int(
                 (record.get("lastStatus") or {}).get("revision")
                 or record.get("lastObservedRevision")
@@ -745,8 +776,6 @@ class BindingManager:
             self._log(record, "wake.ok", revision=revision, messageId=message_id, reason=reason)
             return
 
-        attempts = int((record.get("wake") or {}).get("attempts") or 0) + 1
-        delay_ms = self.config.backoff_ms(attempts)
         record["lastWake"] = {
             "at": _now_iso(),
             "revision": revision,
@@ -754,6 +783,25 @@ class BindingManager:
             "ok": False,
             "error": safe.clean_text(error, 200),
         }
+        if _is_local_session_key(session_key):
+            # The gateway only admits a keyed wake into a *live* local session
+            # (gateway/run_plugin_injection.py: `_plugin_local_session` reads
+            # `authority.sessions[chat_id]`). An idle classic-REPL session is not live, so the
+            # refusal says nothing about the item — do not climb the shared backoff ladder,
+            # just retry at a fixed short interval until a viewer (TUI/desktop/next turn) owns
+            # the session again.
+            wake_state = dict(record.get("wake") or {})
+            wake_state["deferred"] = int(wake_state.get("deferred") or 0) + 1
+            wake_state["nextWakeAllowedAt"] = int(now * 1000) + self.config.wake_retry_seconds * 1000
+            record["wake"] = wake_state
+            record["lastWake"]["deferred"] = True
+            self._persist(record)
+            self._log(
+                record, "wake.deferred", reason="no-live-session", revision=revision, error=error
+            )
+            return
+        attempts = int((record.get("wake") or {}).get("attempts") or 0) + 1
+        delay_ms = self.config.backoff_ms(attempts)
         record["wake"] = {
             "attempts": attempts,
             "nextWakeAllowedAt": int(now * 1000) + delay_ms,
