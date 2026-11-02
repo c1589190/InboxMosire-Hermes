@@ -32,15 +32,21 @@
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
+| `inboxId` | str | 必填；缺省取 settings 的 `inboxId` |
 | `sessionId` | str? | 缺省 = 调用方 session（`plugin_session.session_key()`） |
-| `inboxId` | str? | 缺省取配置 `inboxId` |
-| `inboxToken` | str? | 就地给 token 值（不落盘、不记日志） |
-| `adapterTokenRef` | str? | token **文件路径**（`file:<path>`），推荐路径；文件须 0600 |
-| `apiBaseUrl` | str? | 缺省取配置 `apiUrl` |
+| `adapterTokenRef` | str? | `file:<path>`（0600）或 `env:<NAME>`；`inline:` 直接拒绝 |
+| `apiBaseUrl` | str? | 缺省取 settings `apiUrl` |
 | `channels` | str[]? | 订阅频道过滤，缺省 `[]` = 全部 |
 | `label` | str? | 人类可读标签，仅用于 status/log |
 | `wakeMode` | `claim` \| `view-ack` | 缺省 `claim` |
-| `descriptor` | object \| str? | 直接给描述符（可由 `inbox_adapter_bind` 一次性带全参数） |
+| `wakeProfile` | `generic` \| `iibot` | 缺省 `generic` |
+| `descriptor` | object \| JSON 字符串? | 一次性带全参数；显式参数优先 |
+
+返回 `{"ok": true, "sessionKey": …, "binding": {…}, "status": {…}}`；失败返回
+`{"ok": false, "code": "…", "message": …}`（`NO_SESSION_KEY` / `INVALID_ARGUMENT` /
+`TOKEN_MISSING` / `TOKEN_INLINE_FORBIDDEN` / `TOKEN_FILE_PERMISSIONS` / `TOKEN_UNREADABLE` /
+`TOO_MANY_BINDINGS`）——不抛异常、不回显 token。
+
 
 `inboxId`/`channels`/`apiBaseUrl` 一律用 `SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/` 校验。
 
@@ -78,33 +84,29 @@ start_failed, stopped, rest}`。
 
 ## 3. 配置键（`plugins.entries.<id>.settings.*`）
 
-### inbox-wake
+### inbox-wake（`plugin.yaml` 的 14 个键，写在 `plugins.entries.inbox-wake.settings.*`）
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `enabled` | bool | `true` | 关掉后所有 binding 不启动 |
-| `apiUrl` | str | `http://127.0.0.1:18765` | 必须回环或显式内网 |
+| `enabled` | bool | `true` | 关掉后不建立任何 SSE 连接（绑定表保留） |
+| `apiUrl` | str | `http://127.0.0.1:18765` | 非回环只 warning |
 | `inboxId` | str | `main` | 缺省绑定目标 |
-| `channels` | list | `[]` | 空 = 全部 |
-| `adapterTokenRef` | str | `""` | token 文件路径（`file:` 前缀可省） |
-| `debounceMs` | int | `300` | 去抖窗口 |
-| `heartbeatTimeoutSeconds` | int | `45` | SSE 静默判死 |
-| `reconnectBaseMs` | int | `1000` | 重连退避起点 |
-| `reconnectMaxMs` | int | `60000` | 重连退避上限 |
-| `wakeBackoffBaseMs` | int | `30000` | 注入失败退避起点 |
-| `wakeBackoffMaxMs` | int | `900000` | 注入失败退避上限 |
-| `requestTimeoutMs` | int | `10000` | 单次 HTTP |
-| `summaryEnabled` | bool | `true` | 关掉则唤醒只带 header |
-| `summaryMaxItems` | int | `3` | 1–10 |
-| `summaryMaxTitleChars` | int | `80` | 8–200（历史命名，实为 summary 长度） |
-| `summaryMaxTotalChars` | int | `1200` | 摘要块预算 |
-| `wakeContent` | `off` \| `bounded` | `bounded` | 是否带 item 正文（不可信数据） |
-| `wakeContentMaxChars` | int | `4000` | 单条正文上限 |
-| `wakeContentTotalChars` | int | `12000` | 正文总预算 |
-| `wakeProfile` | `generic` \| `iibot` | `generic` | 指令文本 profile |
+| `channels` | list | `[]` | 空 = 订阅该 inbox 全部通道 |
+| `adapterTokenFile` | str | `""` | token **文件**引用（`file:` 前缀可省），0600 |
 | `wakeMode` | `claim` \| `view-ack` | `claim` | 唤醒语义 |
-| `pendingTtlSeconds` | int | `600` | 待定唤醒过期时间 |
-| `occupancy` | bool | `true` | 是否写占用标记 |
+| `wakeProfile` | `generic` \| `iibot` | `generic` | 指令文本档（`iibot` 是零语义 alias） |
+| `summaryEnabled` | bool | `true` | 关掉则唤醒不带摘要 |
+| `summaryMaxItems` | int | `3` | 夹到 1–3 |
+| `wakeContent` | `off` \| `bounded` | `bounded` | 是否附带 item 正文（不可信数据） |
+| `debounceMs` | int | `300` | SSE 事件去抖窗口 |
+| `heartbeatTimeoutSeconds` | int | `45` | SSE 静默判死 |
+| `requestTimeoutMs` | int | `10000` | 单次 HTTP |
+| `maxBindings` | int | `8` | 进程内绑定上限 |
+
+其余为内部常量（不进 `config_schema`）：`reconnectBaseMs=1000`、`reconnectMaxMs=60000`、
+`wakeBackoffBaseMs=30000`、`wakeBackoffMaxMs=900000`、`summaryMaxTitleChars=80`、
+`summaryMaxTotalChars=1200`、`wakeContentMaxChars=4000`、`wakeContentTotalChars=12000`。
+
 
 ### persona-mode
 

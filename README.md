@@ -26,28 +26,35 @@
 ## 安装
 
 ```bash
-# 1. 落盘插件（本人 shell 若被沙箱限制写 ~/.hermes，请在你自己的终端执行）
-./scripts/install.sh
-
-# 2. 在 ~/.hermes/config.yaml 启用（脚本会打印需要粘贴的片段）
-plugins:
-  enabled: [persona-mode, inbox-wake]
-
-# 3. 校验
-hermes plugins doctor persona-mode
-hermes plugins doctor inbox-wake
+git clone git@github.com:c1589190/InboxMosire-Hermes.git
+cd InboxMosire-Hermes
+./scripts/install.sh          # 装插件 → 写 adapter token(0600) → 写设置 → 体检
 ```
 
-详见 `docs/INSTALL.md`（含 token 落盘 0600、`allow_gateway_injection`、MCP 挂载）。
+之后两件事由你自己跑（脚本只打印，不代跑）：
+
+```bash
+hermes mcp add inbox-mosire --url http://127.0.0.1:18766/mcp --auth header   # 业务工具
+hermes gateway restart                                                       # 让插件/设置生效
+```
+
+分步可用：`./scripts/install.sh plugins|token|settings|check`，
+从本地 checkout 装：`./scripts/install.sh --local .`。
+详见 `docs/INSTALL.md`（`allow_gateway_injection`、设置键、校验、卸载）。
 
 ## 使用
 
 ```
-/inbox status                 # 当前 session 的 binding 状态
-/inbox bind desk file:/path/to/wake.token channel-a,channel-b
-/inbox unbind
-/inbox retry                  # token rotate 后重读 token 并重启 binding
+/inbox status                          # 当前 session 的 binding、SSE 健康、游标与最近一次唤醒
+/inbox bind main                       # 用 settings 里的 token 绑定（也可 bind <descriptor.json>）
+/inbox bind main channel-a,channel-b   # 只订阅部分通道
+/inbox log 20                          # 最近 20 条适配器事件
+/inbox retry                           # 清退避并重连（token rotate 后也需要）
+/inbox unbind                          # 解绑并释放 occupancy
 ```
+
+工具（agent 视角，toolset `inbox-mosire`）：
+`inbox_adapter_status` / `inbox_adapter_bind` / `inbox_adapter_unbind` / `inbox_adapter_log`。
 
 人设：会话工作目录放 `PERSONA.md`（QQ bot 的 cwd 是 `/home/cna/DevMosire-iiBot/bot`），
 新一轮对话自动注入；文件缺失或为空时插件下发操作者提示并封禁 `qq_conversation_send`。
@@ -65,8 +72,10 @@ hermes plugins doctor inbox-wake
 
 ## 状态
 
-**设计定稿，实现未开始。** 本仓库当前只含文档与（即将添加的）插件源码骨架；
-`docs/ACCEPTANCE.md` 里所有条目在实现并跑通前一律标记 `未验证`。
+- 两个插件已实现：`plugins/persona-mode/`、`plugins/inbox-wake/`，`tests/` 覆盖
+  persona 契约 / 门禁 / 模板 / 配置 / HTTP 客户端 / SSE 解析 / 唤醒决策 / 注册接线。
+- 本机端到端（真 gateway + 真 InboxMosire）尚未跑过：`~/.hermes` 只有安装用户可写，
+  安装、`plugins doctor`、真机冒烟需要操作者在自己终端执行 —— 见 `docs/ACCEPTANCE.md`。
 
 ## 红线
 

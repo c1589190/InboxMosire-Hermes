@@ -40,8 +40,8 @@ InboxMosire (Java, 通知板)  ──HTTP/SSE/MCP──▶  InboxMosire-Hermes (
 plugins/<id>/__init__.py     # register(ctx)：唯一入口
 plugins/<id>/plugin.yaml     # manifest（v2）
 plugins/<id>/lib/            # 纯逻辑，import 时不触碰宿主
-tests/                       # pytest；纯函数优先，宿主用手写 fake ctx
-scripts/install.sh           # 落盘到 $HERMES_HOME/plugins/ 并打印启用片段
+tests/                       # unittest（pytest 也能跑）；纯函数优先，宿主用手写 fake ctx（tests/_loader.py）
+scripts/install.sh           # 装插件 → 写 adapter token(0600) → config set 设置 → doctor 体检
 docs/                        # 设计/对齐/能力/工具/验收
 ```
 
@@ -60,8 +60,8 @@ docs/                        # 设计/对齐/能力/工具/验收
 ## 6. 校验
 
 ```bash
-python -m compileall plugins            # 语法
-python -m pytest -q                     # 单测（纯逻辑 + fake ctx）
+python3 -m compileall plugins           # 语法
+python3 -m unittest discover -s tests   # 单测（纯逻辑 + fake ctx；pytest 亦可）
 hermes plugins doctor persona-mode      # manifest/register/registry 漂移
 hermes plugins doctor inbox-wake
 ```

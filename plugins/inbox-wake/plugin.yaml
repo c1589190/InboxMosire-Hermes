@@ -1,0 +1,83 @@
+name: inbox-wake
+version: "0.1.0"
+description: "InboxMosire wake adapter for Hermes: SSE cursor + bound-session wake, bounded untrusted summary, occupancy lease, bind/unbind tools and /inbox command. Business inbox tools (list/claim/push/complete/rest) stay in the InboxMosire MCP server — this plugin only turns notifications into a wake."
+author: "ConstantinXIV"
+manifest_version: 2
+api_version: 1
+license: "MIT"
+homepage: "https://github.com/c1589190/InboxMosire-Hermes"
+tags: ["inbox", "wake", "sse", "notifications", "inboxmosire"]
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+  - post_tool_call
+  - on_session_end
+  - on_session_reset
+  - on_session_delete
+provides_tools:
+  - inbox_adapter_status
+  - inbox_adapter_bind
+  - inbox_adapter_unbind
+  - inbox_adapter_log
+config_keys:
+  - enabled
+  - apiUrl
+  - inboxId
+  - channels
+  - adapterTokenFile
+  - wakeMode
+  - wakeProfile
+  - summaryEnabled
+  - summaryMaxItems
+  - wakeContent
+  - debounceMs
+  - heartbeatTimeoutSeconds
+  - requestTimeoutMs
+  - maxBindings
+config_schema:
+  enabled:
+    type: bool
+    label: 启用 inbox 唤醒
+    description: 关闭后不建立任何 SSE 连接（已绑定会话保留状态）。
+  apiUrl:
+    type: str
+    label: InboxMosire API 地址
+    description: 默认回环地址；改写前确认不要指向公网。
+  inboxId:
+    type: str
+    label: 默认 inbox
+  channels:
+    type: list
+    label: 默认订阅通道
+    description: 空列表表示订阅该 inbox 的全部通道。
+  adapterTokenFile:
+    type: str
+    label: adapter token 文件
+    description: 指向一个 0600 权限的文件，内容为 Bearer token；token 不写进 config.yaml。
+  wakeMode:
+    type: str
+    label: 唤醒模式（claim / view-ack）
+  wakeProfile:
+    type: str
+    label: 唤醒文案档（generic / iibot）
+  summaryEnabled:
+    type: bool
+    label: 唤醒时附带有界摘要
+  summaryMaxItems:
+    type: int
+    label: 摘要最多条目数（1-3 建议）
+  wakeContent:
+    type: str
+    label: 唤醒正文策略（off / bounded / full）
+  debounceMs:
+    type: int
+    label: 事件去抖（毫秒）
+  heartbeatTimeoutSeconds:
+    type: int
+    label: SSE 心跳超时（秒）
+  requestTimeoutMs:
+    type: int
+    label: HTTP 请求超时（毫秒）
+  maxBindings:
+    type: int
+    label: 同时绑定的会话上限

@@ -1,0 +1,45 @@
+name: persona-mode
+version: "0.1.0"
+description: "Inject an operator-authored persona contract (PERSONA.md) into every session: a constant role line in the system prompt, the contract body as a per-turn user-message injection with hash-based dedupe and automatic re-anchoring after compaction, plus an outbound-tool guard while the file is missing. Ports @mosire/dsh-persona-mode to Hermes."
+author: "c1589190"
+manifest_version: 2
+api_version: 1
+license: "MIT"
+homepage: "https://github.com/c1589190/InboxMosire-Hermes"
+tags: ["persona", "system-prompt", "guard", "iibot"]
+provides_hooks:
+  - pre_llm_call
+  - pre_tool_call
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    description: "Turn persona injection off without disabling the plugin."
+  personaFile:
+    type: str
+    default: "PERSONA.md"
+    description: "Path to the persona file: absolute, or relative to the calling session's working directory."
+  maxChars:
+    type: int
+    default: 4000
+    description: "Hard cap on the injected contract body (characters). Over-long files are truncated with a marker."
+  outboundGuard:
+    type: bool
+    default: true
+    description: "Block outbound chat tools while PERSONA.md is missing."
+  outboundTools:
+    type: list
+    default: ["qq_conversation_send", "conversation_send"]
+    description: "Tool names (suffix-matched, MCP prefixes included) blocked while the persona file is missing."
+  denyTools:
+    type: list
+    default: []
+    description: "Optional tool narrow list (suffix-matched). Empty = no narrowing; equivalent to DSH's Minimal toolset when populated."
+
+config_keys:
+  - enabled
+  - personaFile
+  - maxChars
+  - outboundGuard
+  - outboundTools
+  - denyTools

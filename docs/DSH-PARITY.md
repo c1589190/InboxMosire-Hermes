@@ -59,7 +59,7 @@
 | SSE + `Last-Event-ID` 续传、45s 心跳超时、1s→60s 重连退避 | 同 | ✅ |
 | 只读：不 claim/complete/push | 同（AGENTS.md 红线 4） | ✅ |
 | 占用标记 `PUT/DELETE occupancy`，失败降级 | 同 | ✅ |
-| `applyRest(restSeconds)`：完成类工具结果带 `restSeconds` → `nextWakeAllowedAt` | `post_tool_call` 观察工具结果里的 `restSeconds`（≤86400，0 清除） | 🔁 |
+| `applyRest(restSeconds)`：完成类工具结果带 `restSeconds` → `nextWakeAllowedAt` | `post_tool_call` 钩子观察 `inbox_rest`（含 `mcp__<server>__inbox_rest`）结果里的 `restSeconds` → 写 `wake.nextWakeAllowedAt` 并记 `rest.applied`；非 rest 工具忽略 | ✅ |
 | program-MCP 就绪诊断（`hasBusinessTools(agent, wakeMode)`） | 查工具注册表里是否存在 `inbox_list`（含 MCP 前缀），结果写 `health.programMcp` 并在 `status` 里显示 | 🔁 |
 
 ## 4. 状态、日志、生命周期

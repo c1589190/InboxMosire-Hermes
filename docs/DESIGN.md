@@ -127,7 +127,7 @@ unbound ──bind──▶ starting ──GET /status OK──▶ streaming ─
 ### 4.2 唤醒判定（AND）
 
 1. binding `enabled`；
-2. `now >= nextWakeAllowedAt`（rest / 退避）；
+2. `now >= nextWakeAllowedAt`（rest / 退避；rest 由 `post_tool_call` 钩子读 `inbox_rest` 的 `restSeconds` 写入）；
 3. 去抖窗口已过（`debounceMs`，默认 300ms）；
 4. `revision > lastWokenRevision`（**同一 revision 只唤醒一次**）；
 5. `available > 0`（`GET /status` 回源，不信 SSE 缓存）；
