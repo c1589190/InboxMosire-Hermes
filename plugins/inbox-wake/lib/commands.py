@@ -33,7 +33,7 @@ def handle(raw_args: str, manager: Any, session_key: str) -> Optional[str]:
         result = manager.status(target)
         if not result.get("ok"):
             return f"未绑定：{result.get('message')}\n用 /inbox bind <inboxId> 绑定。"
-        return _format_status(result["binding"])
+        return _format_status(result["binding"], _inject_capability(manager))
     if sub == "bind":
         if len(argv) < 2:
             return "用法：/inbox bind <descriptor.json | inboxId> [channels]"
@@ -55,7 +55,7 @@ def handle(raw_args: str, manager: Any, session_key: str) -> Optional[str]:
             result = manager.bind(target, {"inboxId": arg, "channels": channels})
         if not result.get("ok"):
             return f"绑定失败：{result.get('code')} {result.get('message')}"
-        return "已绑定\n" + _format_status(result["binding"])
+        return "已绑定\n" + _format_status(result["binding"], _inject_capability(manager))
     if sub == "unbind":
         target = argv[1] if len(argv) > 1 else session_key
         result = manager.unbind(target)
@@ -76,7 +76,12 @@ def handle(raw_args: str, manager: Any, session_key: str) -> Optional[str]:
     return f"未知子命令：{sub}\n\n{HELP}"
 
 
-def _format_status(record: dict[str, Any]) -> str:
+def _inject_capability(manager: Any) -> str:
+    """Which host runs this manager; "none" means a wake here can never be delivered."""
+    return str(getattr(manager, "inject_capability", "unknown"))
+
+
+def _format_status(record: dict[str, Any], inject_capability: str = "unknown") -> str:
     health = record.get("health") or {}
     status = record.get("lastStatus") or {}
     wake = record.get("lastWake") or {}
@@ -88,6 +93,7 @@ def _format_status(record: dict[str, Any]) -> str:
         f"channels   : {','.join(channels) if channels else '(全部)'}",
         f"wakeMode   : {record.get('wakeMode')} / {record.get('wakeProfile')}",
         f"token      : {record.get('tokenRef')}",
+        f"inject     : {inject_capability}",
         f"revision   : observed={record.get('lastObservedRevision')} woken={record.get('lastWokenRevision')}"
         f" available={status.get('available')}",
         f"sse        : {health.get('sse')} turn={health.get('turn')} reconnects={health.get('reconnects')}"

@@ -40,7 +40,7 @@ class FakeNetClient:
     def delete_occupancy(self, inbox_id, session_ref):
         return None
 
-    def open_events(self, inbox_id, *, last_event_id=""):
+    def open_events(self, inbox_id, *, last_event_id="", timeout=None):
         return iter(())
 
 

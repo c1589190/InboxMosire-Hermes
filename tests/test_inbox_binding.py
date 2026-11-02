@@ -213,6 +213,43 @@ class WakeDecisionTests(Base):
         self.assertIn("正文出现了", text)
 
 
+class InjectHostTests(Base):
+    """Only a gateway / classic-CLI host can deliver a wake; a one-shot worker must stay quiet."""
+
+    def test_manager_is_injectable_by_default(self):
+        self.assertNotEqual(self.manager.inject_capability, "none")
+        self.manager.set_inject_capability("gateway")
+        self.seed()
+        self.fake.status_payload = {"revision": 5, "available": 1}
+        self.wake()
+        self.assertEqual(len(self.injected), 1)
+
+    def test_no_inject_host_skips_once_and_never_backs_off(self):
+        self.manager.set_inject_capability("none")
+        record = self.seed()
+        self.fake.status_payload = {"revision": 5, "available": 1}
+        self.wake()
+        self.wake()  # same revision: the skip is logged once, not per event
+        self.assertEqual(self.injected, [], "injectless host must not call inject")
+        events = [entry.get("event") for entry in self.store.ops().get(KEY, [])]
+        self.assertEqual(events.count("wake.skipped"), 1)
+        self.assertNotIn("wake.failed", events)
+        self.assertEqual(events.count("wake.ok"), 0)
+        self.assertEqual(int(record.get("lastWokenRevision") or 0), 0)
+        self.assertEqual((record.get("wake") or {}).get("attempts") or 0, 0)
+        self.assertIn((record.get("wake") or {}).get("nextWakeAllowedAt"), (0, None))  # 未设退避
+
+    def test_status_line_reports_inject_capability(self):
+        commands_mod = _loader.inbox_lib("commands")
+        self.manager.set_inject_capability("gateway")
+        self.seed()
+        self.store.put_binding(KEY, self.store.get_binding(KEY))
+        result = commands_mod.handle("status", self.manager, KEY)
+        self.assertIn("inject     : gateway", result)
+        self.manager.set_inject_capability("none")
+        self.assertIn("inject     : none", commands_mod.handle("status", self.manager, KEY))
+
+
 class RestAndTtlTests(Base):
     def test_rest_seconds_defers_wakes(self):
         self.seed()

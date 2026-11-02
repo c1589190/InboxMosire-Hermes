@@ -32,6 +32,23 @@ _EMOJI = {
 }
 
 
+def _host_inject_capability(ctx: Any) -> str:
+    """Which host this process is. Only a live gateway or the classic CLI REPL can deliver an
+    injected wake; one-shot/worker processes load the plugin too and must not burn the shared
+    backoff with attempts they can never win (``inject_message: no live gateway is available``)."""
+    manager = getattr(ctx, "_manager", None)
+    if manager is None:
+        return "unknown"
+    try:
+        if bool(getattr(manager, "has_gateway_message_injector", False)):
+            return "gateway"
+        if getattr(manager, "_cli_ref", None) is not None:
+            return "cli"
+    except Exception:
+        return "unknown"
+    return "none"
+
+
 def _make_inject(ctx: Any):
     """``inject(content, session_key) -> (ok, error)`` around the host's gateway injection."""
 
@@ -178,13 +195,23 @@ def register(ctx: Any) -> None:
         except Exception as exc:
             logger.warning("inbox-wake: cannot register unload hook: %s", exc)
 
+    capability = _host_inject_capability(ctx)
+    setter = getattr(manager, "set_inject_capability", None)
+    if callable(setter):
+        setter(capability)
+
     resumed = 0
-    if config.enabled:
+    if config.enabled and capability != "none":
         try:
             resumed = manager.resume_all()
         except Exception as exc:
             logger.warning("inbox-wake: resume failed: %s", exc)
+    elif config.enabled:
+        logger.info(
+            "inbox-wake: this process cannot deliver a wake (inject=%s); bindings stay parked "
+            "for the gateway to resume", capability,
+        )
     logger.info(
-        "inbox-wake: loaded (api=%s inbox=%s mode=%s profile=%s resumed=%d)",
-        config.api_url, config.inbox_id, config.wake_mode, config.wake_profile, resumed,
+        "inbox-wake: loaded (api=%s inbox=%s mode=%s profile=%s resumed=%d inject=%s)",
+        config.api_url, config.inbox_id, config.wake_mode, config.wake_profile, resumed, capability,
     )

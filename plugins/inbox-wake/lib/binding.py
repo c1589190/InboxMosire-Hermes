@@ -107,6 +107,15 @@ class BindingManager:
         self._shutdown = threading.Event()
         self._poll_lock = threading.Lock()
         self._poll_thread: Optional[threading.Thread] = None
+        # Which host is running this manager: only a gateway or the classic CLI REPL can
+        # actually deliver an injected message. One-shot/worker processes load the plugin too
+        # and must never burn the shared backoff with attempts they cannot win.
+        self.inject_capability: str = "unknown"
+        self._skip_logged: dict[str, int] = {}
+
+    def set_inject_capability(self, capability: str) -> None:
+        """Record whether this process can deliver an injected wake ("gateway"/"cli"/"none")."""
+        self.inject_capability = capability
 
     # ---- helpers --------------------------------------------------------
 
@@ -644,6 +653,16 @@ class BindingManager:
             return
         runtime = self._runtime.get(session_key)
         if runtime is None:
+            return
+        if self.inject_capability == "none":
+            revision = int(
+                (record.get("lastStatus") or {}).get("revision")
+                or record.get("lastObservedRevision")
+                or 0
+            )
+            if self._skip_logged.get(session_key) != revision:
+                self._skip_logged[session_key] = revision
+                self._log(record, "wake.skipped", reason="no-inject-host", revision=revision)
             return
         now = self.clock()
 
