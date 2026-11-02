@@ -51,6 +51,7 @@ class Config:
     request_timeout_ms: int = 10000
     max_bindings: int = 8
     pending_ttl_seconds: int = 600
+    auto_bind: bool = False
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
@@ -135,6 +136,7 @@ class Config:
             get("requestTimeoutMs"), 10000, minimum=500, maximum=60000
         )
         cfg.max_bindings = safe.coerce_int(get("maxBindings"), 8, minimum=1, maximum=32)
+        cfg.auto_bind = safe.coerce_bool(get("autoBind"), False)
         cfg.warnings = warnings
         return cfg
 
@@ -148,7 +150,7 @@ class Config:
             "summaryMaxTotalChars", "wakeContent", "wakeContentMaxChars",
             "wakeContentTotalChars", "debounceMs", "heartbeatTimeoutSeconds",
             "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs",
-            "requestTimeoutMs", "maxBindings",
+            "requestTimeoutMs", "maxBindings", "autoBind",
         ):
             if not callable(get):
                 break

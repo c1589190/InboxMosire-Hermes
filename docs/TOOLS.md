@@ -93,6 +93,7 @@ start_failed, stopped, rest}`。
 | `inboxId` | str | `main` | 缺省绑定目标 |
 | `channels` | list | `[]` | 空 = 订阅该 inbox 全部通道 |
 | `adapterTokenFile` | str | `""` | token **文件**引用（`file:` 前缀可省），0600 |
+| `autoBind` | bool | `false` | 会话首轮自动用上面的 settings 绑定（失败只写 warning，不打断 turn） |
 | `wakeMode` | `claim` \| `view-ack` | `claim` | 唤醒语义 |
 | `wakeProfile` | `generic` \| `iibot` | `generic` | 指令文本档（`iibot` 是零语义 alias） |
 | `summaryEnabled` | bool | `true` | 关掉则唤醒不带摘要 |

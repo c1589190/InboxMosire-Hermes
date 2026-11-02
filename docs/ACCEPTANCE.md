@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（81 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（86 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -109,6 +109,17 @@
 - C4/C5 的日志事件名与验收文案不同：实际是 `status.error` / `sse.retry` / `wake.failed`。
 - 仍未覆盖：真 SSE 断线重连（D8/D9 只有 `_consume` 单测）、`on_stream_end` 替代路径（H2）、
   真机 `inject_message` 排队语义（H3）。
+
+## K. kit 与 autoBind（2026-11-02 新增）
+
+- ✅ K1 `autoBind` 默认关闭时行为不变（`tests/test_inbox_binding.py::AutoBindTests`）
+- ✅ K2 `autoBind` 打开后，会话首轮自动绑定：真机日志 `inbox-wake: autoBind 已绑定会话 agent:main:local:dm:local-10d9de4a…（inbox=main api=http://127.0.0.1:18765）`，同轮 `inbox_adapter_status` 返回 `"ok": true`
+- ✅ K3 自动绑定失败不打断 turn：缺 tokenRef / token 0644 两种情形只写 warning（单测覆盖）
+- ✅ K4 同一会话只自动绑定一次（`_autobind_attempted`，单测覆盖）
+- ✅ K5 挂 `mcp_servers.inbox` 后 `health.programMcp` 变为 `ready`，12 个 `inbox_*` 工具可被 agent 发现（真机 `hermes mcp test inbox` → `✓ Tools discovered: 12`）
+- ✅ K6 `kit/kit.sh up` 在本机全流程跑通：起 InboxMosire（API 18765 / MCP 18766）→ 签发两个 0600 最小权限 token（只回显 credential_id）→ 写 `mcp_servers.inbox` → 写插件设置（含 `autoBind`）→ 重启 gateway
+- ✅ K7 `kit/kit.sh doctor|status|down` 可用；`status` 不打印任何 token 值
+- 🟡 K8 iibot（`mcp_servers.iibot`）挂载路径已实现（token 从 `~/.config/iibot/control.env` 的 `IIBOT_CONTROL_TOKEN` 落盘 0600），本轮未接真 bot 验证 → `NOT_RUN`
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

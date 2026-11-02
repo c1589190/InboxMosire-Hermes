@@ -357,3 +357,61 @@ class BindTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoBindTests(Base):
+    """``autoBind``: 首轮自动绑定，让"打开 Hermes 就自动挂载"成立。"""
+
+    def _manager(self, **settings):
+        cfg = config_mod.Config.from_mapping(settings)
+        manager = binding_mod.BindingManager(cfg, self.store, self._inject, clock=lambda: self.now)
+        manager._client = lambda record: self.fake
+        self.addCleanup(manager.shutdown)
+        return manager
+
+    def _token_file(self, mode: int = 0o600) -> str:
+        handle, path = tempfile.mkstemp(prefix="inbox-autobind-")
+        os.write(handle, b"test-token\n")
+        os.close(handle)
+        os.chmod(path, mode)
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        return path
+
+    def test_autobind_binds_unbound_session_on_first_turn(self):
+        path = self._token_file()
+        manager = self._manager(autoBind=True, adapterTokenFile=f"file:{path}")
+        self.assertIsNone(self.store.get_binding(KEY))
+        manager.on_turn_start(KEY)
+        record = self.store.get_binding(KEY)
+        self.assertIsNotNone(record)
+        self.assertEqual(record["inboxId"], "main")
+        self.assertEqual(record["tokenRef"], f"file:{path}")
+        self.assertEqual(record["wakeMode"], "claim")
+        self.assertEqual(self.fake.occupancy[0][0], "put")
+        self.assertEqual(self.injected, [])  # bind 不注入，唤醒才注入
+
+    def test_autobind_off_by_default(self):
+        manager = self._manager(adapterTokenFile=f"file:{self._token_file()}")
+        manager.on_turn_start(KEY)
+        self.assertIsNone(self.store.get_binding(KEY))
+
+    def test_autobind_without_token_ref_does_not_raise(self):
+        manager = self._manager(autoBind=True)
+        manager.on_turn_start(KEY)  # 只 warning，不抛
+        self.assertIsNone(self.store.get_binding(KEY))
+
+    def test_autobind_bad_token_permissions_stays_unbound(self):
+        path = self._token_file(0o644)
+        manager = self._manager(autoBind=True, adapterTokenFile=f"file:{path}")
+        manager.on_turn_start(KEY)
+        self.assertIsNone(self.store.get_binding(KEY))  # TOKEN_FILE_PERMISSIONS 拦下
+
+    def test_autobind_only_once_per_session(self):
+        path = self._token_file()
+        manager = self._manager(autoBind=True, adapterTokenFile=f"file:{path}")
+        manager.on_turn_start(KEY)
+        first = self.store.get_binding(KEY)
+        manager.on_turn_start(KEY)
+        second = self.store.get_binding(KEY)
+        self.assertEqual(first["createdAt"], second["createdAt"])
+        self.assertEqual(len(self.fake.occupancy), 1)

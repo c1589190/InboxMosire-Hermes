@@ -117,7 +117,73 @@ grep -c 'persona-hash' <session 转写>
 # 把 PERSONA.md 临时改名 → 外发工具应被 block，且只出现一次 persona-missing 提示
 ```
 
-## 6. 卸载
+## 6. kit：一个目录 + 一句话自动挂载
+
+`kit/` 是给"我只想放个 jar + 一份说明，然后开 hermes 说话就挂上"的场景准备的最小发行包：
+
+```
+kit/
+├── kit.sh            # doctor / up / status / down / probe / token
+├── kit.env.example   # 所有可覆盖项的默认值
+├── 引导.md           # 给 agent 读的引导（对话时让它照做）
+├── jars/             # 放 inbox-server-*-all.jar（可选：iibot-app-*.jar）
+└── run/              # 运行期目录（日志、pid、数据），已 gitignore
+```
+
+### 6.1 三步
+
+```bash
+cd kit
+cp kit.env.example kit.env      # 改 JARS_DIR / INBOX_DATA 等（可全部留默认）
+cp /path/to/inbox-server-*-all.jar jars/
+./kit.sh doctor                 # 先自检：java / jar / hermes / 端口 / token 权限 / 插件
+./kit.sh up                     # 起服务 + 发 token + 挂 MCP + 写插件设置 + 重启 gateway
+```
+
+`up` 之后**不需要再手工 `/inbox bind`**：`autoBind` 生效后，任何新会话的首轮会用
+settings 里的 `inboxId` / `adapterTokenFile` 自动绑定（失败只写一条 warning，不打断对话）。
+
+### 6.2 `./kit.sh up` 到底做了什么
+
+1. **起 InboxMosire**：缺 `inbox.db` 先 `init --data-dir`，然后 `java -jar … serve --data-dir …`
+   （API `18765`、MCP `18766`，日志 `kit/run/inbox.log`，pid 落 `kit/run/inbox.pid`）。
+2. **发两个最小权限 token（一律 0600）**：
+   - `hermes-wake`：`status:read` `items:read` `events:read` `inbox:occupy` → 给插件；
+   - `hermes-program`：`status:read` `items:read` `items:manage` → 给 MCP 挂载用。
+   只回显 `credential_id`，**从不打印 token 明文**。
+3. **挂 MCP**：`mcp_servers.inbox.{url,transport=streamable-http,headers.Authorization}`。
+   这会把 InboxMosire 自带的 12 个工具（`inbox_list` / `inbox_claim` / `inbox_complete` /
+   `inbox_rest` …）带给 agent，插件的 `health.programMcp` 也因此从 `missing` 变成 `ready`。
+4. **写插件设置**：`enabled` / `apiUrl` / `inboxId` / `adapterTokenFile` / `wakeMode` /
+   `wakeProfile` / `autoBind`，并确保 `allow_gateway_injection: true`。
+   （插件 hook/tool/`/inbox` 都在 gateway 进程里跑，所以设置改完必须重启 gateway。）
+5. **重启 gateway**：先 `hermes gateway stop`，等它真的退出，再 `nohup hermes gateway run`；
+   有活跃会话时 drain 可能要 1 分钟左右，脚本最多等 150 秒。
+
+### 6.3 其它命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `./kit.sh doctor` | 不改任何东西，只报告缺什么（jar / java / hermes / 端口 / token 权限 / 插件 / MCP 挂载） |
+| `./kit.sh status` | 服务与 token 权限现状、gateway、插件设置、已挂 MCP 列表（都不打印 token 值） |
+| `./kit.sh probe` | 跑一次 `hermes -z` 一次性会话，验证 autoBind 真的绑上（会在绑定表留一条） |
+| `./kit.sh down` | 停掉 kit 起的 InboxMosire（不动 gateway、不动配置） |
+| `./kit.sh token wake\|program` | 只重新签发某个 token（覆盖旧文件，0600） |
+
+### 6.4 配合对话使用
+
+把 `kit/引导.md` 交给 agent（或直接让它在 `kit/` 目录里读），然后说一句
+"按 引导.md 把 inbox 起来"。它应当依次跑 `doctor` → `up` → `status` 并汇报，
+期间**不得** `cat` token 文件或把 token 贴进对话。
+
+### 6.5 注意
+
+- 只挂 MCP、不跑插件时：把 `kit.env` 里 `AUTO_BIND=0`（默认是 1）。
+- 不想让 kit 重启 gateway：`RESTART_GATEWAY=never ./kit.sh up`，然后自己按需重启。
+- `kit/run/`、`kit/jars/`、`kit.env` 已在 `kit/.gitignore` 里；jar 不进仓库。
+- 端口被占时会直接报出来；`INBOX_API`/`INBOX_MCP` 可以改成别的端口（两处要一致改）。
+
+## 7. 卸载
 
 ```bash
 hermes plugins disable inbox-wake

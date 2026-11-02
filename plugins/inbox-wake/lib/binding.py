@@ -102,6 +102,7 @@ class BindingManager:
         self.clock = clock
         self._lock = threading.RLock()
         self._runtime: dict[str, Runtime] = {}
+        self._autobind_attempted: set[str] = set()
         self._clients: dict[str, InboxClient] = {}
 
     # ---- helpers --------------------------------------------------------
@@ -387,8 +388,15 @@ class BindingManager:
         is per-turn and stays observer-only"), and the host fires it at the end of every turn. A
         worker stopped by that event would otherwise stay dead until a manual ``/inbox retry``, so
         revive it here instead of waiting for the operator.
+
+        When ``autoBind`` is on, the first turn of an unbound session binds the configured inbox by
+        itself, so an operator only has to start Hermes instead of typing ``/inbox bind`` in every
+        new session.
         """
         runtime = self._runtime.get(session_key)
+        if runtime is None:
+            self._auto_bind(session_key)
+            runtime = self._runtime.get(session_key)
         if runtime is None:
             return
         with runtime.lock:
@@ -403,6 +411,43 @@ class BindingManager:
             self._start(record, reason="turn-start")
         except Exception as exc:  # a failed revive must never break the turn
             logger.warning("inbox-wake: cannot restart worker for %s: %s", session_key, exc)
+
+    def _auto_bind(self, session_key: str) -> None:
+        """Bind the configured inbox for a brand-new session when ``autoBind`` is enabled.
+
+        Runs once per session key and never raises: an automatic bind must not break the turn. A
+        failure is logged (``autoBind`` needs ``adapterTokenFile``; a missing or badly permissioned
+        token is the usual cause) and the session simply stays unbound, so ``/inbox bind`` still
+        works as the manual fallback.
+        """
+        if not getattr(self.config, "auto_bind", False):
+            return
+        if not SESSION_KEY_RE.fullmatch(session_key or ""):
+            return
+        if session_key in self._autobind_attempted:
+            return
+        self._autobind_attempted.add(session_key)
+        if not str(getattr(self.config, "adapter_token_file", "") or "").strip():
+            logger.warning(
+                "inbox-wake: autoBind 已开启但未配置 adapterTokenFile，跳过自动绑定（inbox=%s）",
+                self.config.inbox_id,
+            )
+            return
+        try:
+            result = self.bind(session_key, {})
+        except Exception as exc:  # never break the turn
+            logger.warning("inbox-wake: autoBind 失败 %s: %s", session_key, exc)
+            return
+        if result.get("ok"):
+            logger.info(
+                "inbox-wake: autoBind 已绑定会话 %s（inbox=%s api=%s）",
+                session_key, self.config.inbox_id, self.config.api_url,
+            )
+        else:
+            logger.warning(
+                "inbox-wake: autoBind 未成功 %s: %s %s",
+                session_key, result.get("code"), result.get("message"),
+            )
 
     def on_turn_end(self, session_key: str) -> None:
         runtime = self._runtime.get(session_key)
