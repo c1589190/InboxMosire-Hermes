@@ -77,7 +77,10 @@ start_failed, stopped, rest}`。
 /inbox bind <descriptor.json | inboxId tokenRef [channels]>
 /inbox unbind [sessionId]
 /inbox retry [sessionId]
+/inbox owners                # 本机所有绑定：谁是活跃的、谁是 passive
 /inbox help
+
+`/inbox bind <inboxId>` 在本会话执行 = **显式绑定（source=manual）**：会钉住这条绑定，并把同一 inbox 的其它绑定降级成 `passive`。`autoBind` 建的是 `source=auto`，遇到 manual 持有者时自己变 `passive (manual-holder)`，不会抢事件。
 ```
 
 返回纯文本（终端/网关都渲染）；失败时返回 `失败: <code>: <message>`，不抛异常。

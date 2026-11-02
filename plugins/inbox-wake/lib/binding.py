@@ -25,6 +25,12 @@ SESSION_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 PROGRAM_MCP_TOOLS = ("inbox_list", "inbox_status")
 
 
+def _ownership_key(record: dict[str, Any]) -> tuple[int, str]:
+    """显式绑定（manual）优先于 autoBind，同类再比 `updatedAt`。"""
+    manual = 1 if str(record.get("bindSource") or "auto") == "manual" else 0
+    return (manual, _recency_key(record))
+
+
 def _recency_key(record: dict[str, Any]) -> str:
     """``updatedAt`` / ``createdAt`` are ISO-8601 strings; lexicographic order matches time order."""
     return str(record.get("updatedAt") or record.get("createdAt") or "")
@@ -230,6 +236,20 @@ class BindingManager:
                 logger.warning("inbox-wake: cannot resume binding %s: %s", key, exc)
         return started
 
+    def _has_manual_holder(self, record: dict[str, Any]) -> bool:
+        for other in self.store.bindings().values():
+            if other.get("sessionKey") == record.get("sessionKey"):
+                continue
+            if other.get("inboxId") != record.get("inboxId"):
+                continue
+            if str(other.get("apiBaseUrl") or "").rstrip("/") != str(
+                record.get("apiBaseUrl") or ""
+            ).rstrip("/"):
+                continue
+            if other.get("enabled") and not other.get("passive") and other.get("bindSource") == "manual":
+                return True
+        return False
+
     def _demote_siblings(self, record: dict[str, Any]) -> list[str]:
         """Mark the older bindings of the same inbox passive; keep at most N active."""
         keep = max(1, int(self.config.max_bindings_per_inbox))
@@ -241,11 +261,14 @@ class BindingManager:
             and str(other.get("apiBaseUrl") or "").rstrip("/")
             == str(record.get("apiBaseUrl") or "").rstrip("/")
         ]
-        same.sort(key=_recency_key, reverse=True)
+        same.sort(key=_ownership_key, reverse=True)
         demoted: list[str] = []
+        mine_manual = record.get("bindSource") == "manual"
         for other in same[keep - 1 :] if keep > 1 else same:
             if other.get("passive"):
                 continue
+            if other.get("bindSource") == "manual" and not mine_manual:
+                continue  # 显式绑定优先，自动绑定不许顶掉它
             other["passive"] = True
             other["passiveReason"] = "superseded"
             self._persist(other)
@@ -267,7 +290,7 @@ class BindingManager:
             )
             groups.setdefault(group, []).append(record)
         for records in groups.values():
-            records.sort(key=_recency_key, reverse=True)
+            records.sort(key=_ownership_key, reverse=True)
             for stale in records[keep:]:
                 if stale.get("passive"):
                     continue
@@ -469,6 +492,8 @@ class BindingManager:
             session_id=str(pick("sessionId", session_key)),
         )
         record["host"] = capability
+        # manual = 会话里显式 /inbox bind；auto = autoBind。显式的那个钉住，不被后来者顶掉。
+        record["bindSource"] = str(params.get("source") or "manual")
         if existing:
             record["lastEventId"] = str(existing.get("lastEventId") or "")
             record["lastObservedRevision"] = int(existing.get("lastObservedRevision") or 0)
@@ -478,13 +503,23 @@ class BindingManager:
         self._persist(record)
         self._start(record, reason="bind")
         health = self._refresh_status(record)
-        demoted = self._demote_siblings(record)
+        if record.get("bindSource") == "auto" and self._has_manual_holder(record):
+            # 有人在显式会话里绑过：新来的自动绑定排队等，抢不走事件。
+            record["passive"] = True
+            record["passiveReason"] = "manual-holder"
+            self._persist(record)
+            self._stop(record, reason="manual-holder")
+            self._log(record, "binding.passive", reason="manual-holder", inbox=inbox_id)
+            demoted: list[str] = []
+        else:
+            demoted = self._demote_siblings(record)
         self._log(
             record,
             "binding.bind",
             inbox=inbox_id,
             mode=wake_mode,
             channels=channels,
+            source=record.get("bindSource"),
             demoted=len(demoted),
         )
         return {"ok": True, "binding": self._public(record), "status": health}
@@ -537,6 +572,27 @@ class BindingManager:
             record["health"]["turn"] = "idle"
         self._persist(record)
         return {"ok": True, "binding": self._public(record)}
+
+    def owners(self) -> list[dict[str, Any]]:
+        """Every binding on this host, active first. Lets the operator see who eats the inbox."""
+        records = list(self.store.bindings().values())
+        records.sort(key=_ownership_key, reverse=True)
+        out: list[dict[str, Any]] = []
+        for record in records:
+            out.append(
+                {
+                    "sessionKey": record.get("sessionKey"),
+                    "sessionId": record.get("sessionId"),
+                    "inboxId": record.get("inboxId"),
+                    "apiBaseUrl": record.get("apiBaseUrl"),
+                    "active": not bool(record.get("passive")),
+                    "passiveReason": record.get("passiveReason"),
+                    "source": record.get("bindSource") or "manual",
+                    "host": record.get("host") or "unknown",
+                    "updatedAt": record.get("updatedAt") or record.get("createdAt"),
+                }
+            )
+        return out
 
     def log(self, session_key: str, limit: int = 20) -> dict[str, Any]:
         entries = oplog.read(self.store, session_key, limit)
@@ -600,7 +656,7 @@ class BindingManager:
             )
             return
         try:
-            result = self.bind(session_key, {})
+            result = self.bind(session_key, {"source": "auto"})
         except Exception as exc:  # never break the turn
             logger.warning("inbox-wake: autoBind 失败 %s: %s", session_key, exc)
             return

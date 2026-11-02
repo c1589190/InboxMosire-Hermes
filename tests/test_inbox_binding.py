@@ -18,6 +18,7 @@ binding_mod = _loader.inbox_lib("binding")
 config_mod = _loader.inbox_lib("config")
 state_mod = _loader.inbox_lib("state")
 client_mod = _loader.inbox_lib("client")
+commands_mod = _loader.inbox_lib("commands")
 
 KEY = "agent:main:telegram:dm:4242"
 SID = "session-4242"
@@ -158,6 +159,98 @@ class PassiveBindingTests(Base):
         self.manager._demote_siblings(new)
         self.assertTrue((self.store.get_binding(old["sessionKey"]) or {}).get("passive"))
         self.assertFalse((self.store.get_binding(new["sessionKey"]) or {}).get("passive"))
+
+
+class OwnershipTests(Base):
+    """Exactly one session should eat the inbox: an explicit bind pins, autoBind never steals."""
+
+    SECOND = "agent:main:local:dm:local-second"
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "inbox.token"
+        path.write_text("tok", encoding="utf-8")
+        os.chmod(path, 0o600)
+        self.config.adapter_token_file = f"file:{path}"
+
+    def _bind(self, key: str, source: str) -> dict:
+        self.manager.set_inject_capability("tui")
+        result = self.manager.bind(key, {"source": source})
+        self.assertTrue(result.get("ok"), result)
+        return self.store.get_binding(key) or {}
+
+    def _record(self, key: str, *, source: str, updated: str) -> dict:
+        record = binding_mod.new_record(
+            session_key=key,
+            inbox_id="main",
+            api_base_url="http://127.0.0.1:18765",
+            token_ref="file:/tmp/inbox.token",
+            channels=[],
+            wake_mode="view-ack",
+            wake_profile="generic",
+            session_id=key.split(":")[-1],
+        )
+        record["host"] = "tui"
+        record["bindSource"] = source
+        record["updatedAt"] = updated
+        self.store.put_binding(key, record)
+        self.manager._runtime_for(key)
+        return record
+
+    def test_manual_bind_pins_and_autobind_defers(self):
+        self._bind(KEY, "manual")
+        auto = self._bind(self.SECOND, "auto")
+        self.assertTrue(auto.get("passive"))
+        self.assertEqual(auto.get("passiveReason"), "manual-holder")
+        self.assertFalse((self.store.get_binding(KEY) or {}).get("passive"))
+        events = [e.get("event") for e in self.store.ops().get(self.SECOND, [])]
+        self.assertIn("binding.passive", events)
+
+    def test_manual_bind_supersedes_an_active_autobind(self):
+        self._bind(self.SECOND, "auto")
+        self._bind(KEY, "manual")
+        self.assertTrue((self.store.get_binding(self.SECOND) or {}).get("passive"))
+        self.assertFalse((self.store.get_binding(KEY) or {}).get("passive"))
+
+    def test_prune_prefers_manual_over_a_newer_autobind(self):
+        self._record("agent:main:local:dm:local-a", source="auto", updated="2026-11-02T21:00:00Z")
+        self._record("agent:main:local:dm:local-b", source="auto", updated="2026-11-02T23:00:00Z")
+        self._record("agent:main:local:dm:local-c", source="manual", updated="2026-11-02T20:00:00Z")
+        self.assertEqual(self.manager.resume_all(), 1)
+        active = [
+            key
+            for key in ("agent:main:local:dm:local-a", "agent:main:local:dm:local-b", "agent:main:local:dm:local-c")
+            if not (self.store.get_binding(key) or {}).get("passive")
+        ]
+        self.assertEqual(active, ["agent:main:local:dm:local-c"])
+
+    def test_owners_lists_active_then_passive(self):
+        self._bind(KEY, "manual")
+        self._bind(self.SECOND, "auto")
+        owners = self.manager.owners()
+        self.assertEqual(len(owners), 2)
+        self.assertTrue(owners[0]["active"])
+        self.assertEqual(owners[0]["source"], "manual")
+        self.assertEqual(owners[0]["sessionKey"], KEY)
+        self.assertFalse(owners[1]["active"])
+        self.assertEqual(owners[1]["passiveReason"], "manual-holder")
+        text = commands_mod.handle("owners", self.manager, KEY)
+        self.assertIn("活跃 1 条", text)
+        self.assertIn("* ACTIVE", text)
+        self.assertIn("passive (manual-holder)", text)
+        self.assertIn("agent:main:local:dm:local-second", text)
+
+    def test_status_shows_ownership(self):
+        self._bind(KEY, "manual")
+        text = commands_mod.handle("status", self.manager, KEY)
+        self.assertIn("source=manual", text)
+        self.assertIn("active     : yes", text)
+        auto = self._bind(self.SECOND, "auto")
+        self.assertTrue(auto.get("passive"))
+        text = commands_mod.handle("status", self.manager, self.SECOND)
+        self.assertIn("passive (manual-holder)", text)
 
 
 class WakeDecisionTests(Base):

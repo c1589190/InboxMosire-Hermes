@@ -145,6 +145,8 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 
 ```
 /inbox status                          # 绑定、SSE 健康、inject 宿主、游标与最近一次唤醒
+/inbox owners                          # 本机所有绑定；只有 1 条 active，其余 passive
+/inbox bind iibot-bot                  # 在本会话执行 = 钉住（manual），别的会话自动降级
 /inbox bind main                       # 用 settings 里的 token 绑定（或 bind <descriptor.json>）
 /inbox bind main channel-a,channel-b   # 只订阅部分通道
 /inbox log 20                          # 最近 20 条适配器事件（sse.event / wake.ok / deferred / failed）

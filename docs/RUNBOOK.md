@@ -251,6 +251,27 @@ hermes plugins enable inbox-wake
 
 ---
 
+## 7.3 只有一个会话收事件（归属 / ownership）
+
+同一个 `(apiUrl, inboxId)` 上只应有一条**活跃**绑定，否则一条事件会有 N 个会话各跑一轮。
+
+| 谁决定的 | 结果 |
+|---|---|
+| `/inbox bind <inboxId>`（会话内显式执行） | `source=manual`，**钉住**；同 inbox 其它绑定被降级为 `passive (superseded)` |
+| `autoBind`（settings 里 `autoBind=true`） | `source=auto`；已有 manual 持有者时自己变 `passive (manual-holder)`，不抢事件 |
+| 重启后 `resume_all()` | 先按 `maxBindingsPerInbox` 裁剪（manual 优先，其次最新），再启动；`passive` 不订阅、不唤醒（`wake.skipped reason=passive-binding`） |
+
+查看与收拾：
+
+```bash
+# 会话内
+/inbox owners         # 活跃 N 条 / 上限 1；列出每条绑定的 sessionKey、source、host、passive 原因
+/inbox unbind <sessionKey>   # 把不需要的那条删掉
+/inbox status         # active : yes|passive (reason) source=manual|auto host=tui|gateway|…
+```
+
+`/inbox owners` 输出里的长 `sessionKey`（`agent:main:…:local-<hash>`）就是 `/inbox unbind` 的参数。
+
 ## 8. 未验证项（NOT_RUN）
 
 - `hermes gateway install`（systemd --user 单元、开机自启）——本机只验证了 `stop / run / ensure / status`。

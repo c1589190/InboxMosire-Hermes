@@ -146,6 +146,10 @@ gateway 一启动 `resume_all()` 就把 6 个历史会话（`source=oneshot`，�
 - ✅ M3 `maxBindingsPerInbox`（默认 1）：`resume_all()` **先裁剪再启动**，同一 `(apiUrl, inboxId)` 只保留最新一条活跃，其余标 `passive` + `binding.passive reason=superseded`
 - ✅ M4 新绑定成功时把同 inbox 的旧绑定降级（`binding.bind … demoted=N`）
 - ✅ M5 `passive` 绑定永不唤醒：`wake.skipped reason=passive-binding`（同一 revision 只记一次）
+- ✅ M7 显式 `/inbox bind` = `source=manual`，会把同 inbox 的 auto 绑定降级为 `passive (superseded)`（`OwnershipTests::test_manual_bind_supersedes_an_active_autobind`）
+- ✅ M8 `autoBind` 遇到 manual 持有者时自我降级为 `passive (manual-holder)`，不抢事件（`test_manual_bind_pins_and_autobind_defers`）
+- ✅ M9 `resume_all()` 的裁剪 manual 优先于更新的 auto（`test_prune_prefers_manual_over_a_newer_autobind`）
+- ✅ M10 `/inbox owners` 列出全部绑定并标注 active/passive/source/host；`/inbox status` 有 `active` 行（`test_owners_lists_active_then_passive` / `test_status_shows_ownership`）
 - ⬜ M6 真机复测：清理现有 6 条僵尸后重启 gateway，确认只剩 1 条活跃、`/inbox status` 显示 `inject: tui` 或 `gateway` → `NOT_RUN`（待用户重启）
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）

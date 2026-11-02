@@ -16,7 +16,11 @@ HELP = """\
   bind <inboxId> [channels]       快速绑定（token 走 settings.adapterTokenFile）
   unbind [sessionId]   解绑并释放 occupancy
   retry [sessionId]    清退避并重连
+  owners               本机所有绑定：谁是活跃的、谁是 passive（同 inbox 只留 1 条活跃）
   log [limit]          最近适配器事件（默认 20 条）
+
+  /inbox bind <inboxId> 在本会话执行 = 显式绑定（manual），会钉住并降级其它绑定；
+  其它会话的绑定显示 passive，不订阅、不唤醒。
 
 业务操作（list/claim/complete/push/rest）在 InboxMosire MCP 里，不在本插件。
 """
@@ -64,6 +68,23 @@ def handle(raw_args: str, manager: Any, session_key: str) -> Optional[str]:
         target = argv[1] if len(argv) > 1 else session_key
         result = manager.retry(target)
         return "已重连" if result.get("ok") else f"重连失败：{result.get('message')}"
+    if sub == "owners":
+        owners = manager.owners()
+        if not owners:
+            return "本机没有绑定。"
+        active = sum(1 for item in owners if item.get("active"))
+        keep = int(getattr(manager.config, "max_bindings_per_inbox", 1) or 1)
+        lines = [f"活跃 {active} 条 / 每 inbox 上限 {keep}"]
+        for item in owners:
+            flag = "* ACTIVE " if item.get("active") else "  passive"
+            reason = f" ({item.get('passiveReason')})" if item.get("passiveReason") else ""
+            lines.append(
+                f"{flag}{reason}  {item.get('source')}  host={item.get('host')}"
+                f"  {item.get('inboxId')}  {item.get('updatedAt')}\\n"
+                f"    {item.get('sessionKey')}"
+            )
+        lines.append("解绑其它会话：/inbox unbind <上面那行 sessionKey>")
+        return "\n".join(lines)
     if sub == "log":
         try:
             limit = int(argv[1]) if len(argv) > 1 else 20
@@ -100,6 +121,11 @@ def _format_status(record: dict[str, Any], inject_capability: str = "unknown") -
         f"wakeMode   : {record.get('wakeMode')} / {record.get('wakeProfile')}",
         f"token      : {record.get('tokenRef')}",
         f"inject     : {inject_capability}",
+        "active     : "
+        + ("passive" + (f" ({record.get('passiveReason')})" if record.get("passiveReason") else "")
+           if record.get("passive")
+           else "yes")
+        + f" source={record.get('bindSource') or 'manual'} host={record.get('host') or 'unknown'}",
         f"revision   : observed={record.get('lastObservedRevision')} woken={record.get('lastWokenRevision')}"
         f" available={status.get('available')}",
         f"sse        : {health.get('sse')} turn={health.get('turn')} reconnects={health.get('reconnects')}"

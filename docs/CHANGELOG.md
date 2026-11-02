@@ -14,6 +14,14 @@
 - `docs/RUNBOOK.md`：部署 / 启动 / 停止 / 升级回滚 / 验证清单 / 远程部署注意 / 排障表 + 宿主差异表。
 - `docs/CHANGELOG.md`（本文件）、`README.md` 重写。
 
+### 归属（ownership）：只让一个会话收事件
+
+- **症状**：重启后"想要的那个会话"继续工作，但别的会话也在被叫醒；一次 inbox 事件 → 多个 agent 各跑一轮。
+- **根因**：`autoBind` 和手动绑定没有优先级，`resume_all()` 把所有绑定一起复活；一条事件按各自 `session_key` 注入。
+- **修法**：绑定记 `bindSource`（`manual` / `auto`）与 `host`；显式 `/inbox bind` 钉住并降级同 inbox 的旧绑定；
+  `autoBind` 遇到 manual 持有者自我降级 `passive (manual-holder)`；`resume_all()` 先裁剪后启动（manual 优先、其次最新）；
+  `passive` 绑定不订阅不唤醒；新增 `/inbox owners` 与 `/inbox status` 的 `active` 行；`bind()` 在不能投递的宿主返回 `NO_INJECT_HOST`。
+
 ### 修复
 - **SSE 事件唤不醒**（阻断）：`BindingManager._log()` 与调用处的 `event=` 关键字撞名 → `_on_event` 抛 TypeError，在 `_schedule()` 之前中断，事件永远不触发唤醒。参数改名 `name`，调用处改传 `kind=`。
 - **`on_session_end` 语义误用**（阻断）：该钩子**每轮**触发（`hermes_cli/lifecycle.py:72` "per-turn and stays observer-only"），旧实现把它当会话销毁 → 首轮之后 SSE 永久 suspended。改为按 turn 结束处理，真正的销毁用 `on_session_finalize` / `on_session_reset` / `on_session_delete`；`on_turn_start` 会复活被 suspend 的 worker。
