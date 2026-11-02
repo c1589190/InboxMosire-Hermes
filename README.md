@@ -68,6 +68,7 @@ hermes gateway restart                                                       # �
 | `docs/HOST-CAPABILITIES.md` | Hermes 宿主能力探测，带 `file:line` 依据 |
 | `docs/TOOLS.md` | 工具 schema、`/inbox` 命令、配置键与默认值 |
 | `docs/INSTALL.md` | 安装、启用、验证、回滚 |
+| `docs/RUNBOOK.md` | **部署 / 启动 / 停止 / 升级回滚 / 验证清单 / 远程部署注意 / 排障表** |
 | `docs/ACCEPTANCE.md` | 验收清单与当前验证状态 |
 
 ## 状态
