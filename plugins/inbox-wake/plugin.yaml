@@ -21,20 +21,31 @@ provides_tools:
   - inbox_adapter_unbind
   - inbox_adapter_log
 config_keys:
-  - enabled
-  - apiUrl
-  - inboxId
-  - channels
-  - adapterTokenFile
-  - wakeMode
-  - wakeProfile
-  - summaryEnabled
-  - summaryMaxItems
-  - wakeContent
-  - debounceMs
-  - heartbeatTimeoutSeconds
-  - requestTimeoutMs
-  - maxBindings
+  - plugins.entries.inbox-wake.settings.enabled
+  - plugins.entries.inbox-wake.settings.apiUrl
+  - plugins.entries.inbox-wake.settings.inboxId
+  - plugins.entries.inbox-wake.settings.channels
+  - plugins.entries.inbox-wake.settings.adapterTokenFile
+  - plugins.entries.inbox-wake.settings.wakeMode
+  - plugins.entries.inbox-wake.settings.wakeProfile
+  - plugins.entries.inbox-wake.settings.summaryEnabled
+  - plugins.entries.inbox-wake.settings.summaryMaxItems
+  - plugins.entries.inbox-wake.settings.summaryMaxTitleChars
+  - plugins.entries.inbox-wake.settings.summaryMaxTotalChars
+  - plugins.entries.inbox-wake.settings.wakeContent
+  - plugins.entries.inbox-wake.settings.wakeContentMaxChars
+  - plugins.entries.inbox-wake.settings.wakeContentTotalChars
+  - plugins.entries.inbox-wake.settings.debounceMs
+  - plugins.entries.inbox-wake.settings.heartbeatTimeoutSeconds
+  - plugins.entries.inbox-wake.settings.sseReadTimeoutSeconds
+  - plugins.entries.inbox-wake.settings.pollSeconds
+  - plugins.entries.inbox-wake.settings.reconnectBaseMs
+  - plugins.entries.inbox-wake.settings.reconnectMaxMs
+  - plugins.entries.inbox-wake.settings.wakeBackoffBaseMs
+  - plugins.entries.inbox-wake.settings.wakeBackoffMaxMs
+  - plugins.entries.inbox-wake.settings.requestTimeoutMs
+  - plugins.entries.inbox-wake.settings.maxBindings
+  - plugins.entries.inbox-wake.settings.autoBind
 config_schema:
   enabled:
     type: bool
