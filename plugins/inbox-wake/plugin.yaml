@@ -45,7 +45,10 @@ config_keys:
   - plugins.entries.inbox-wake.settings.wakeBackoffMaxMs
   - plugins.entries.inbox-wake.settings.requestTimeoutMs
   - plugins.entries.inbox-wake.settings.maxBindings
+  - plugins.entries.inbox-wake.settings.maxBindingsPerInbox
   - plugins.entries.inbox-wake.settings.autoBind
+  - plugins.entries.inbox-wake.settings.programTools
+  - plugins.entries.inbox-wake.settings.programToolsRequired
 config_schema:
   enabled:
     type: bool
@@ -93,3 +96,15 @@ config_schema:
   maxBindings:
     type: int
     label: 同时绑定的会话上限
+  maxBindingsPerInbox:
+    type: int
+    label: 同一 inbox 的活跃绑定上限
+    description: 超出的绑定降级为 passive（不订阅、不唤醒）；显式绑定优先。
+  programTools:
+    type: list
+    label: 唤醒前必须存在的程序 MCP 工具
+    description: 留空则按 wakeProfile 选组（generic→inbox_list；iibot→qq_conversation_read）。缺 required 时不唤醒，只记 wake.skipped。
+  programToolsRequired:
+    type: bool
+    label: 强制检查程序 MCP 工具
+    description: 关闭后退回旧行为（工具缺失也唤醒）。

@@ -22,7 +22,18 @@ from .state import Store
 logger = logging.getLogger(__name__)
 
 SESSION_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
-PROGRAM_MCP_TOOLS = ("inbox_list", "inbox_status")
+
+# 唤醒正文只说「用你的程序 MCP 处理这些 source」。如果这组工具根本不在本进程里，
+# 唤醒就是一条无法执行的通知（真实症状：先起 Hermes、后起 iiBot 时唤醒空转）。
+# required 缺 = 不许唤醒（等工具就位）；recommended 缺 = 只降级为 partial，仍唤醒。
+PROGRAM_TOOL_GROUPS: dict[str, dict[str, tuple[str, ...]]] = {
+    "inbox": {"required": ("inbox_list",), "recommended": ("inbox_status",)},
+    "iibot": {"required": ("qq_conversation_read",), "recommended": ("qq_conversation_ack", "qq_media_get")},
+}
+#: wakeProfile → 工具组。generic = 只挂 InboxMosire MCP；iibot = iiBot 业务 MCP。
+PROFILE_TOOL_GROUP = {"generic": "inbox", "iibot": "iibot"}
+#: 兼容旧语义：inbox 组的 required + recommended（`health.programMcp` 的判定集合）。
+PROGRAM_MCP_TOOLS = PROGRAM_TOOL_GROUPS["inbox"]["required"] + PROGRAM_TOOL_GROUPS["inbox"]["recommended"]
 
 
 def _ownership_key(record: dict[str, Any]) -> tuple[int, str]:
@@ -197,18 +208,66 @@ class BindingManager:
         view.pop("schemaVersion", None)
         return view
 
-    def _program_mcp_state(self) -> str:
-        """Do the business inbox tools exist in this process? (claim mode needs them to act.)"""
+    @staticmethod
+    def _tool_names() -> Optional[set[str]]:
+        """Live tool names of this process, or ``None`` when the host registry is unreachable.
+
+        ``None`` means "cannot know" (one-shot CLI, tests, older host) and must fail **open**:
+        refusing to wake on an unreadable registry would brick the plugin on innocent hosts.
+        """
         try:
             from tools.registry import registry  # type: ignore
 
-            names = set(registry.get_all_tool_names() or [])
+            return set(registry.get_all_tool_names() or [])
         except Exception:
-            return "unknown"
-        hits = {tool for tool in PROGRAM_MCP_TOOLS if any(n == tool or n.endswith(f"__{tool}") for n in names)}
-        if not hits:
-            return "missing"
-        return "ready" if len(hits) == len(PROGRAM_MCP_TOOLS) else "partial"
+            return None
+
+    def _program_tool_requirement(
+        self, record: Optional[dict[str, Any]] = None
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+        """``(group, required, recommended)`` for this binding; ``programTools`` overrides the group."""
+        override = tuple(getattr(self.config, "program_tools", ()) or ())
+        if override:
+            return ("custom", override, ())
+        profile = str((record or {}).get("wakeProfile") or self.config.wake_profile or "generic")
+        group = PROFILE_TOOL_GROUP.get(profile, "inbox")
+        spec = PROGRAM_TOOL_GROUPS.get(group) or PROGRAM_TOOL_GROUPS["inbox"]
+        return (group, tuple(spec["required"]), tuple(spec["recommended"]))
+
+    def _program_tools_state(self, record: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Which program-MCP tools this binding needs, and whether they are actually here."""
+        group, required, recommended = self._program_tool_requirement(record)
+        detail: dict[str, Any] = {
+            "group": group,
+            "state": "unknown",
+            "required": list(required),
+            "recommended": list(recommended),
+            "missing": [],
+            "missingRecommended": [],
+        }
+        names = self._tool_names()
+        if names is None:
+            return detail
+
+        def present(tool: str) -> bool:
+            return any(name == tool or name.endswith(f"__{tool}") for name in names)
+
+        missing = [tool for tool in required if not present(tool)]
+        missing_recommended = [tool for tool in recommended if not present(tool)]
+        if required and len(missing) == len(required):
+            state = "missing"
+        elif missing or missing_recommended:
+            state = "partial"
+        else:
+            state = "ready"
+        detail.update(
+            {"state": state, "missing": missing, "missingRecommended": missing_recommended}
+        )
+        return detail
+
+    def _program_mcp_state(self, record: Optional[dict[str, Any]] = None) -> str:
+        """Do the business inbox tools exist in this process? (a wake is useless without them.)"""
+        return str(self._program_tools_state(record)["state"])
 
     # ---- lifecycle ------------------------------------------------------
 
@@ -564,7 +623,9 @@ class BindingManager:
             return {"ok": False, "code": "NOT_BOUND", "message": "该会话没有绑定"}
         if refresh:
             self._refresh_status(record)
-        record["health"]["programMcp"] = self._program_mcp_state()
+        program = self._program_tools_state(record)
+        record["health"]["programMcp"] = program["state"]
+        record["health"]["programTools"] = program
         runtime = self._runtime.get(session_key)
         if runtime is not None and runtime.turn_running:
             record["health"]["turn"] = "running"
@@ -853,6 +914,24 @@ class BindingManager:
             return
         if revision <= last_woken:
             return
+
+        # 冷启动守卫：工具还没就位时唤醒只会得到一条无法执行的通知（agent 会以为 QQ 侧
+        # 有东西却调不了 qq_conversation_read）。不推进 lastWokenRevision，工具一出现就补上。
+        if getattr(self.config, "program_tools_required", True):
+            program = self._program_tools_state(record)
+            if program["missing"]:
+                if self._skip_logged.get(session_key) != revision:
+                    self._skip_logged[session_key] = revision
+                    self._log(
+                        record,
+                        "wake.skipped",
+                        reason="program-tools-missing",
+                        revision=revision,
+                        group=program["group"],
+                        missing=program["missing"],
+                    )
+                return
+
         next_allowed = float((record.get("wake") or {}).get("nextWakeAllowedAt") or 0)
         if next_allowed and (now * 1000.0) < float(next_allowed):
             with runtime.lock:

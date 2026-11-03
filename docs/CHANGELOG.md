@@ -14,6 +14,24 @@
 - `docs/RUNBOOK.md`：部署 / 启动 / 停止 / 升级回滚 / 验证清单 / 远程部署注意 / 排障表 + 宿主差异表。
 - `docs/CHANGELOG.md`（本文件）、`README.md` 重写。
 
+### 冷启动自举 + 程序工具守卫（2026-11-03）
+
+- **背景**：用户要求「只起 Hermes，由 agent 按人设把 iiBot 拉起来」，日常是 TUI + 自动 gateway，
+  要求「仅仅重新加载 MCP」、不重启 gateway。宿主侧结论（自动 drift reconcile + 每轮 between-turns 刷新，
+  无需重启也无需发命令）归档在 `docs/COLDSTART.md`。
+- **`binding.py`**：新增 `_program_tools_state()` / `_program_tool_requirement()` —— 按 `wakeProfile`
+  选工具组（`generic`→`inbox_list`；`iibot`→`qq_conversation_read`），`recommended`
+  （`qq_conversation_ack`/`qq_media_get`）缺失只降级 `partial`；**缺少 required 时不注入唤醒**，
+  记 `wake.skipped reason=program-tools-missing`，且**不推进** `lastWokenRevision`，
+  工具就位后同一 revision 补发。宿主进程里没有 `tools.registry` 时 fail open（`unknown` 照常唤醒）。
+  这修掉了「唤醒到了却调不了 `qq_conversation_read`」的假故障（先起 Hermes、后起 iiBot 的必经路径）。
+- **`status()`**：新增 `health.programTools`（`group/state/required/recommended/missing/missingRecommended`），
+  原来的 `health.programMcp` 字符串保留（向后兼容）。
+- **配置**：新增 `programTools`（覆盖工具组）、`programToolsRequired`（默认 true）；
+  顺带修复 `maxBindingsPerInbox` 从未被 `from_mapping()` 赋值（写 3 也一直是 1）。
+- **测试** 103 → 120：新增 `ProgramToolGuardTests` 7 例（缺工具拦截 / 工具就位补发 / 只缺 recommended /
+  无 registry fail open / `programTools` 覆盖 / 开关关闭 / status 明细）。
+
 ### 归属（ownership）：只让一个会话收事件
 
 - **症状**：重启后"想要的那个会话"继续工作，但别的会话也在被叫醒；一次 inbox 事件 → 多个 agent 各跑一轮。

@@ -183,7 +183,7 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 
 ```bash
 python3 -m compileall -q plugins
-python3 -m unittest discover -s tests        # 103 个用例
+python3 -m unittest discover -s tests        # 120 个用例
 hermes plugins validate plugins/inbox-wake --json
 hermes plugins doctor inbox-wake             # 4 tool(s), 7 hook(s)
 hermes plugins doctor persona-mode           # 0 tool(s), 2 hook(s)

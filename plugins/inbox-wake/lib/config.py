@@ -61,6 +61,12 @@ class Config:
     # Retry at this fixed short interval instead of climbing the shared backoff ladder.
     wake_retry_seconds: int = 15
     auto_bind: bool = False
+    #: 唤醒前必须存在的「程序 MCP」工具名；空 = 按 wakeProfile 选工具组
+    #: （generic→inbox_list，iibot→qq_conversation_read）。缺 required 就不唤醒，
+    #: 否则会出现「唤醒了却调不了 qq_conversation_read」的假故障。
+    program_tools: list[str] = field(default_factory=list)
+    #: 关掉它 = 退回旧行为（工具缺失也唤醒）。仅在宿主没有工具 registry 时才有意义。
+    program_tools_required: bool = True
     warnings: list[str] = field(default_factory=list)
 
     @classmethod
@@ -158,7 +164,12 @@ class Config:
             get("requestTimeoutMs"), 10000, minimum=500, maximum=60000
         )
         cfg.max_bindings = safe.coerce_int(get("maxBindings"), 8, minimum=1, maximum=32)
+        cfg.max_bindings_per_inbox = safe.coerce_int(
+            get("maxBindingsPerInbox"), cfg.max_bindings_per_inbox, minimum=1, maximum=64
+        )
         cfg.auto_bind = safe.coerce_bool(get("autoBind"), False)
+        cfg.program_tools = safe.as_channels(get("programTools"))
+        cfg.program_tools_required = safe.coerce_bool(get("programToolsRequired"), True)
         cfg.warnings = warnings
         return cfg
 
@@ -173,6 +184,7 @@ class Config:
             "wakeContentTotalChars", "debounceMs", "heartbeatTimeoutSeconds",
             "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs", "wakeRetrySeconds",
             "requestTimeoutMs", "maxBindings", "maxBindingsPerInbox", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
+            "programTools", "programToolsRequired",
         ):
             if not callable(get):
                 break

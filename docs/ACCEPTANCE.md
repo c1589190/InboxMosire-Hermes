@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（103 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（120 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -151,6 +151,17 @@ gateway 一启动 `resume_all()` 就把 6 个历史会话（`source=oneshot`，�
 - ✅ M9 `resume_all()` 的裁剪 manual 优先于更新的 auto（`test_prune_prefers_manual_over_a_newer_autobind`）
 - ✅ M10 `/inbox owners` 列出全部绑定并标注 active/passive/source/host；`/inbox status` 有 `active` 行（`test_owners_lists_active_then_passive` / `test_status_shows_ownership`）
 - ⬜ M6 真机复测：清理现有 6 条僵尸后重启 gateway，确认只剩 1 条活跃、`/inbox status` 显示 `inject: tui` 或 `gateway` → `NOT_RUN`（待用户重启）
+
+## N. 冷启动自举（2026-11-03 新增）
+
+设计见 `docs/COLDSTART.md`。全部 `未验证`（无真机轮次）；单测覆盖项另行标注。
+
+- ⬜ N1 只停 iiBot、gateway 常驻：工具面无 `qq_conversation_list`，`health.programMcp == "missing"`
+- ⬜ N2 同状态下 persona 仍生效（`<persona-contract>` + hash），agent 可执行 bash
+- ⬜ N3 agent 跑 `bot/start-bot.sh start` 后 30s 内：46500 `/v1/status` 200，8765/46501 在听
+- ⬜ N4 **不重启 gateway、不发 `/reload-mcp`**：≤1 tick + 1 回合后 `qq_*`/`inbox_*` 进工具面，`health.programMcp == "ready"`
+- ⬜ N5 等待期内的 QQ 消息：工具就位后收到 1 次唤醒 → `qq_conversation_read` → `qq_conversation_ack` → QQ 侧收到回复；期间无空转唤醒
+- ✅ N6（单测）必需程序工具缺失 → 不注入唤醒，ops log `wake.skipped reason=program-tools-missing`，`lastWokenRevision` 不推进
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

@@ -706,6 +706,128 @@ class AutoBindTests(Base):
         self.assertEqual(len(self.fake.occupancy), 1)
 
 
+_MISSING = object()
+
+
+class _FakeToolRegistry:
+    """Install a fake ``tools.registry`` so the program-tool guard can be exercised.
+
+    The host module is only importable inside a real agent process; without it the guard must
+    fail open, which is what every other test in this file relies on.
+    """
+
+    def __init__(self, names) -> None:
+        self.names = list(names)
+        self._saved: dict[str, object] = {}
+
+    def __enter__(self) -> "_FakeToolRegistry":
+        import types
+
+        package = types.ModuleType("tools")
+        module = types.ModuleType("tools.registry")
+        module.registry = types.SimpleNamespace(get_all_tool_names=lambda: list(self.names))
+        package.registry = module  # type: ignore[attr-defined]
+        for key, value in (("tools", package), ("tools.registry", module)):
+            self._saved[key] = sys.modules.get(key, _MISSING)
+            sys.modules[key] = value
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        for key in ("tools.registry", "tools"):
+            previous = self._saved.get(key, _MISSING)
+            if previous is _MISSING:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = previous  # type: ignore[assignment]
+        return False
+
+
+class ProgramToolGuardTests(Base):
+    """A wake is only useful if the tools that can act on it are actually loaded."""
+
+    def _events(self) -> list[str]:
+        return [entry["event"] for entry in self.manager.log(KEY)["entries"]]
+
+    def _last(self) -> dict:
+        return self.manager.log(KEY)["entries"][-1]
+
+    def test_missing_program_tools_block_the_wake(self):
+        self.seed(wakeProfile="iibot")
+        self.fake.status_payload = {"revision": 5, "available": 1}
+        with _FakeToolRegistry([]):
+            self.wake()
+        self.assertEqual(self.injected, [], "工具不在时不该唤醒一个无法执行的回合")
+        record = self.store.get_binding(KEY)
+        self.assertEqual(record["lastWokenRevision"], 0)
+        entry = self._last()
+        self.assertEqual(entry["event"], "wake.skipped")
+        self.assertEqual(entry["reason"], "program-tools-missing")
+        self.assertEqual(entry["group"], "iibot")
+        self.assertIn("qq_conversation_read", entry["missing"])
+
+    def test_wake_resumes_once_the_tools_appear(self):
+        self.seed(wakeProfile="iibot")
+        self.fake.status_payload = {"revision": 5, "available": 1}
+        with _FakeToolRegistry([]):
+            self.wake()
+        self.assertEqual(self.injected, [])
+        with _FakeToolRegistry(["mcp__iibot__qq_conversation_read", "mcp__iibot__qq_conversation_ack"]):
+            self.wake()
+        self.assertEqual(len(self.injected), 1, "工具就位后同一 revision 必须补上唤醒")
+        self.assertEqual(self.store.get_binding(KEY)["lastWokenRevision"], 5)
+
+    def test_recommended_only_missing_still_wakes(self):
+        self.seed(wakeProfile="iibot")
+        self.fake.status_payload = {"revision": 3, "available": 1}
+        with _FakeToolRegistry(["qq_conversation_read"]) as registry:
+            state = self.manager._program_tools_state(self.store.get_binding(KEY))
+            self.assertEqual(state["state"], "partial")
+            self.assertEqual(state["missing"], [])
+            self.assertIn("qq_media_get", state["missingRecommended"])
+            self.wake()
+        self.assertEqual(len(self.injected), 1)
+
+    def test_unreadable_registry_fails_open(self):
+        """No ``tools.registry`` in this process must never brick the plugin."""
+        self.seed()
+        self.fake.status_payload = {"revision": 2, "available": 1}
+        state = self.manager._program_tools_state(self.store.get_binding(KEY))
+        self.assertEqual(state["state"], "unknown")
+        self.wake()
+        self.assertEqual(len(self.injected), 1)
+
+    def test_program_tools_config_overrides_the_group(self):
+        self.config.program_tools = ["custom_read"]
+        self.config.program_tools_required = True
+        self.seed()
+        self.fake.status_payload = {"revision": 4, "available": 1}
+        with _FakeToolRegistry(["inbox_list", "inbox_status"]):
+            self.wake()
+        self.assertEqual(self.injected, [], "配置覆盖后 inbox_list 不再算数")
+        self.assertEqual(self._last()["group"], "custom")
+        with _FakeToolRegistry(["custom_read"]):
+            self.wake()
+        self.assertEqual(len(self.injected), 1)
+
+    def test_guard_can_be_switched_off(self):
+        self.config.program_tools_required = False
+        self.seed(wakeProfile="iibot")
+        self.fake.status_payload = {"revision": 6, "available": 1}
+        with _FakeToolRegistry([]):
+            self.wake()
+        self.assertEqual(len(self.injected), 1, "programToolsRequired=false 退回旧行为")
+
+    def test_status_exposes_the_program_tool_detail(self):
+        self.seed(wakeProfile="iibot")
+        self.fake.status_payload = {"revision": 1, "available": 0}
+        with _FakeToolRegistry(["qq_conversation_read"]):
+            status = self.manager.status(KEY)
+        health = status["binding"]["health"]
+        self.assertEqual(health["programMcp"], "partial")
+        self.assertEqual(health["programTools"]["group"], "iibot")
+        self.assertEqual(health["programTools"]["missing"], [])
+
+
 class SseTimeoutTests(unittest.TestCase):
     """The SSE socket must not inherit the short request/response timeout."""
 

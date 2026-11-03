@@ -90,3 +90,18 @@
 | `on_session_reset` / `on_session_delete` / `on_session_finalize` | 无直接对应 | 真正的会话销毁/重置边界 | suspend SSE，保留绑定，等 `retry`/下轮 `pre_llm_call` 复活 |
 | 插件 hooks/tools/`/command` 执行位置 | 插件跑在自己的 host 进程 | 全部跑在 **gateway 进程**（`hermes_cli/gateway_plugin_commands.py`） | 改代码/配置后必须重启 gateway |
 | `inject_message` 授权 | 无此门槛 | 需 `plugins.entries.<id>.allow_gateway_injection: true`，且 session 仍存活 | settings + 失败即回退成 `wake.failed` 退避 |
+
+### 5.2 冷启动与 MCP 热加载差异（2026-11-03 追加）
+
+背景：用户要求「只起 Hermes，由 agent 按人设把 iiBot 拉起来」，且日常是 TUI + 自动 gateway，
+**不重启 gateway**。详见 `docs/COLDSTART.md`。
+
+| 能力 | DSH 侧 | Hermes 侧（证据） | 状态 |
+| --- | --- | --- | --- |
+| MCP 工具是 per-session 策略代际 | 无此概念（工具随进程） | 构建时快照，靠 `refresh_agent_mcp_tools` 刷新（`gateway/run_turn.py:470-482`） | ⚠️ 同一轮内拿不到新工具 |
+| 连接失败后的自动重连 | 无（进程重启解决） | housekeeping 每 tick 的 drift reconcile（`gateway/run.py:4528` → `gateway/run_profile_reconcile.py:613`）；冷却 30s→600s（`tools/mcp_tool.py:499`） | ✅ 不需要重启 gateway |
+| 晚连接工具的每轮追加 | 无 | `agent/turn_context.py:556-573`（调用点 `:1138`），`preserve_prefix=True` 不破前缀缓存 | ✅ |
+| 显式重载命令 | 无 | `/reload-mcp`（`gateway/slash_commands.py:1088-1115`），会 invalidate prompt cache 一次 | 🔁 仅作「跳过冷却」的加速键 |
+| CLI 侧 config 变更自动重载 | 无 | `hermes_cli/cli_info_mixin.py:854-900`（`mcp.auto_reload_on_config_change` 默认 true） | ⚠️ 写 `config.yaml` 会静默炸缓存，安装脚本应设 false |
+| 沉睡绑定的 SSE 自愈 | 无（面板重挂载） | `_ensure_poll`/`_poll_loop` + `lib/sse.py` 重连，等待期消息留在 Inbox | ✅ |
+| 唤醒门禁（工具未就位不唤醒） | DSH 无对应概念（工具随宿主进程常驻） | 插件侧 `binding.py:_program_tools_state()`：缺 required 记 `wake.skipped reason=program-tools-missing` | ⚠️ Hermes 特有（冷启动必须先起 jar） |
