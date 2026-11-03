@@ -46,6 +46,32 @@
 - **测试** 103 → 120：新增 `ProgramToolGuardTests` 7 例（缺工具拦截 / 工具就位补发 / 只缺 recommended /
   无 registry fail open / `programTools` 覆盖 / 开关关闭 / status 明细）。
 
+### 角色扮演模式收口：极简 system 成唯一形态（2026-11-03，m00614）
+
+用户定调（m00614）：「把原本的角色扮演模式替换成这个，这就是新的角色扮演模式，之后加载插件也必须
+加载这个，允许修改 hermes」。
+
+- **角色模式只剩一条路**：`persona-mode` 删除 `rolePlacement` 开关，角色行固定作为
+  `build_contract(..., role_line=ROLE_TEXT)` 的头部随契约走同一条 user 注入；**永远不再注册 system
+  prompt section**（原来 `rolePlacement=system` 的 DSH 原版布局取消）。
+- **同伴插件强制**：`persona-mode/plugin.yaml` 加 `requires_plugins: [{id: minimal-system}]`
+  （宿主只告警不硬失败，`hermes_cli/plugins_manifest.py:240-260`），`register()` 里再用
+  `ctx.has_plugin("minimal-system")` 补一条 warning，指明 `hermes plugins enable minimal-system`。
+- **允许修改宿主 → 新增宿主补丁**：`agent.system_prompt_override`（`agent/agent_init.py` 读配置、
+  `agent/system_prompt.py:build_system_prompt_parts` 命中即返回单 tier）。本机已应用，
+  宿主 commit `178997d9a9`（父 `0aab6dcf8b`）。补丁、应用脚本、操作与回退见
+  `patches/0001-host-system-prompt-override.patch`、`scripts/patch-hermes.sh`、`docs/HOST-PATCH.md`。
+  插件 `minimal-system` 保留作未打补丁宿主的兜底；补丁生效时它是 no-op（幂等分支）。
+- **本机配置**（`~/.hermes/config.yaml`，操作者运行配置）：
+  `agent.system_prompt_override: "You are a helpful software engineer assistant."`、
+  `plugins.enabled` 追加 `minimal-system`、`plugins.entries.minimal-system.settings.enabled: true`。
+- **文档**：新增 `docs/HOST-PATCH.md`；更新 `docs/ACCEPTANCE.md`（B9/B12/B13 改写、§O 增 O0/O7）、
+  `docs/DSH-PARITY.md` §5.3、`docs/DESIGN.md` §2/§3.1/§3.5、`README.md`、`docs/INSTALL.md`、
+  `docs/RUNBOOK.md`。
+- **测试** 141 → 139（persona 的 4 个 `rolePlacement` 用例合并成 2 个单路用例 + 1 个同伴告警用例）。
+- **风险未消**：`deepseek` 在 `TOOL_USE_ENFORCEMENT_MODELS` 内，极简 system 会连
+  「You MUST use your tools…」一起去掉，仍需真机 A/B（ACCEPTANCE O8）。
+
 ### 极简 system + 角色行随注入（2026-11-03）
 
 - **背景**：用户新想法（m00493）——「把 Hermes 的系统提示词改成 `You are a helpful software

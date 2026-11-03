@@ -1,6 +1,6 @@
 name: persona-mode
 version: "0.1.0"
-description: "Inject an operator-authored persona contract (PERSONA.md) into every session: the two-sentence role line plus the contract body as a per-turn user-message injection with hash-based dedupe and automatic re-anchoring after compaction, plus an outbound-tool guard while the file is missing. rolePlacement=system restores the DSH layout (role line in the system prompt). Ports @mosire/dsh-persona-mode to Hermes."
+description: "The role-play mode: the two-sentence role line plus the operator-authored PERSONA.md contract travel as ONE per-turn user-message injection (hash-based dedupe, automatic re-anchoring after compaction), leaving the system prompt to minimal-system / agent.system_prompt_override, plus an outbound-tool guard while the file is missing. Ports @mosire/dsh-persona-mode to Hermes."
 author: "c1589190"
 manifest_version: 2
 api_version: 1
@@ -10,6 +10,8 @@ tags: ["persona", "system-prompt", "guard", "iibot"]
 provides_hooks:
   - pre_llm_call
   - pre_tool_call
+requires_plugins:
+  - id: minimal-system
 config_schema:
   enabled:
     type: bool
@@ -19,10 +21,6 @@ config_schema:
     type: str
     default: "PERSONA.md"
     description: "Path to the persona file: absolute, or relative to the calling session's working directory."
-  rolePlacement:
-    type: str
-    default: "injection"
-    description: "角色行放哪：injection（默认，随契约一起进首条 user 注入，配合 minimal-system 把 system 压成一句）或 system（DSH 原版：两句进系统提示词）。"
   maxChars:
     type: int
     default: 4000
@@ -42,7 +40,6 @@ config_schema:
 
 config_keys:
   - plugins.entries.persona-mode.settings.enabled
-  - plugins.entries.persona-mode.settings.rolePlacement
   - plugins.entries.persona-mode.settings.personaFile
   - plugins.entries.persona-mode.settings.maxChars
   - plugins.entries.persona-mode.settings.outboundGuard

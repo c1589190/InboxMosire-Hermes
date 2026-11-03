@@ -134,22 +134,13 @@ class RegisterTests(unittest.TestCase):
         plugin.register(ctx)
         return ctx
 
-    def test_register_keeps_the_system_prompt_clean_by_default(self) -> None:
-        """默认 rolePlacement=injection：不再往 system 里塞角色行（留给极简 system）。"""
+    def test_register_never_touches_the_system_prompt(self) -> None:
+        """角色模式只有一条路：system prompt 交给 minimal-system / 宿主 override。"""
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
             self.assertEqual(ctx.sections, [])
             self.assertIn("pre_llm_call", ctx.hooks)
             self.assertIn("pre_tool_call", ctx.hooks)
-
-    def test_role_placement_system_wires_the_section(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[], rolePlacement="system")
-            self.assertEqual(len(ctx.sections), 1)
-            section_id, content, kwargs = ctx.sections[0]
-            self.assertEqual(section_id, plugin.ROLE_SECTION_ID)
-            self.assertEqual(content, plugin.ROLE_TEXT)
-            self.assertEqual(kwargs["position"], "after_memory")
 
     def test_role_line_rides_with_the_injected_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,24 +149,21 @@ class RegisterTests(unittest.TestCase):
             text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
             self.assertIn("你在扮演 <persona-contract> 定义的角色", text)
             self.assertIn("自称本鲸", text)
-            # 角色行在契约之前、同一条注入消息里
             self.assertLess(text.index("你在扮演"), text.index("<persona-contract>"))
 
-    def test_role_placement_system_leaves_it_out_of_the_injection(self) -> None:
+    def test_missing_companion_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "PERSONA.md").write_text(BODY, encoding="utf-8")
-            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[], rolePlacement="system")
-            text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
-            self.assertNotIn("你在扮演", text)
-            self.assertIn("自称本鲸", text)
-
-    def test_bad_role_placement_falls_back_to_injection(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[], rolePlacement="nonsense")
-            self.assertEqual(ctx.sections, [])
-            (Path(tmp) / "PERSONA.md").write_text(BODY, encoding="utf-8")
-            text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
-            self.assertIn("你在扮演", text)
+            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
+            # 宿主不提供 has_plugin（老版本/假 ctx）时保持沉默，不误报
+            with self.assertNoLogs("persona_mode_plugin", level="WARNING"):
+                plugin._warn_missing_companion(ctx)
+            ctx.has_plugin = lambda name: False
+            with self.assertLogs("persona_mode_plugin", level="WARNING") as logs:
+                plugin._warn_missing_companion(ctx)
+            self.assertIn("minimal-system", "\n".join(logs.output))
+            ctx.has_plugin = lambda name: name == plugin.REQUIRED_COMPANION
+            with self.assertNoLogs("persona_mode_plugin", level="WARNING"):
+                plugin._warn_missing_companion(ctx)
 
     def test_injects_contract_once_then_stays_quiet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

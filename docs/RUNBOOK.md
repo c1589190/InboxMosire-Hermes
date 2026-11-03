@@ -186,7 +186,7 @@ hermes plugins enable inbox-wake
 | # | 检查 | 命令 | 期望 |
 |---|---|---|---|
 | 1 | 静态 | `python3 -m compileall -q plugins` | 无输出 |
-| 2 | 单测 | `python3 -m unittest discover -s tests` | `Ran N tests OK`（当前 141） |
+| 2 | 单测 | `python3 -m unittest discover -s tests` | `Ran N tests OK`（当前 139） |
 | 3 | manifest | `hermes plugins validate plugins/inbox-wake --json` | `"ok": true` |
 | 4 | 注册 | `hermes plugins doctor inbox-wake` | `4 tool(s), 7 hook(s)` |
 | 5 | 加载 | `grep -a "inbox-wake: loaded" ~/.hermes/logs/agent.log \| tail -1` | 含 api / inbox / mode / profile |

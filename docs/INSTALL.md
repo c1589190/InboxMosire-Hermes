@@ -37,17 +37,18 @@ cd InboxMosire-Hermes
 ## 2. 脚本写进 config.yaml 的东西
 
 ```yaml
+agent:
+  system_prompt_override: "You are a helpful software engineer assistant."  # 需宿主补丁，见 docs/HOST-PATCH.md
 plugins:
-  enabled: [persona-mode, inbox-wake, minimal-system]  # 插件默认不加载，必须点名；minimal-system 可选
+  enabled: [persona-mode, inbox-wake, minimal-system]  # 插件默认不加载，必须点名；persona-mode 依赖 minimal-system
   entries:
-    minimal-system:                           # 可选：把整段 system prompt 换成一句
+    minimal-system:                           # 必需同伴：把整段 system prompt 换成一句
       settings:
         enabled: true
         systemPrompt: "You are a helpful software engineer assistant."
     persona-mode:
       settings:
         enabled: true
-        rolePlacement: injection              # 角色行随注入（配 minimal-system）；system = DSH 原版
         personaFile: /abs/path/to/PERSONA.md  # 不写则读会话工作目录下的 PERSONA.md
     inbox-wake:
       allow_gateway_injection: true           # 不写 true，inject_message 一律返回 False

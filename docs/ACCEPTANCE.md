@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（141 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（139 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -29,15 +29,15 @@
   `{"action": "block", …}`；`pre_tool_call("mcp__iibot__qq_conversation_send", …)` 同样被拦
 - ✅ B7 缺文件时普通工具（`read`、`bash`）**不受影响**
 - ✅ B8 `maxChars` 生效：超长文件被截断到 4000 并附 `<!-- persona-truncated -->`
-- ✅ B9 system prompt 段只有 1 段、≤200 字符，且 `id` 符合 1–128 位小写标识符
+- ✅ B9 **不再注册 system prompt 段**（角色模式只有一条路：system 交给 minimal-system /
+  宿主的 `agent.system_prompt_override`）
 - ✅ B10 `denyTools` 为空时不改变任何工具可用性（默认行为必须无感）
 - ✅ B11 **契约只在 `api_content` sidecar 里时也认得出来**（content 仍是用户原话）：
   `persona.py:message_texts()` 扫全部候选字段；修复前只看第一个非空字段 → 每轮重复注入
-- ✅ B12 **角色行默认随契约一起走 user 注入**（`rolePlacement=injection`）：注册时不再调用
-  `register_system_prompt_section`，注入文本里 `你在扮演 <persona-contract>…` 出现在
-  `<persona-contract>` 之前
-- ✅ B13 `rolePlacement=system` 恢复 DSH 原版布局（1 段 system section ≤200 字符、注入里不含角色行）；
-  非法取值告警并回退 `injection`
+- ✅ B12 **角色行随契约一起走 user 注入**：注入文本里 `你在扮演 <persona-contract>…` 出现在
+  `<persona-contract>` 之前，与正文同一个块（压缩掉就一起重注）
+- ✅ B13 同伴插件缺失时**告警但不阻断**：`ctx.has_plugin("minimal-system")` 为假 → 一条 warning
+  指明 `hermes plugins enable minimal-system`；宿主没有 `has_plugin` 时保持沉默
 
 ## C. inbox-wake 绑定
 
@@ -179,13 +179,15 @@ Hermes 没有该开关，改用公开的 `llm_request` 中间件整段替换（`
 
 | # | 检查 | 状态 |
 | --- | --- | --- |
-| O1 | 注册 `llm_request` 中间件，不注册 system prompt section | ✅ 单测 |
+| O0 | 宿主补丁 `agent.system_prompt_override`（`patches/0001-…`）：命中非空值时 `build_system_prompt_parts` 直接返回单 tier，跳过身份/指引/上下文/技能/memory/时间戳 | ✅ 已打（宿主 commit `178997d9a9`）+ 冒烟 |
+| O1 | 注册 `llm_request` 中间件，不注册 system prompt section（未打补丁的宿主的等价实现） | ✅ 单测 |
 | O2 | 三种线格式都替换：`messages[0].role=="system"` / 顶层 `system`（str 与文本块列表）/ `instructions` | ✅ 单测 |
 | O3 | 只替换首个 system 消息，工具与消息体原样保留；不改原 dict（返回替换体） | ✅ 单测 |
 | O4 | 幂等且字节稳定（同一常量每轮同字节，否则前缀缓存失效） | ✅ 单测 |
 | O5 | 没有 system 槽位 / `enabled=false` / 垃圾输入 → `None`（原样发送，绝不打断 turn） | ✅ 单测 |
 | O6 | Anthropic 块列表折叠成单块时保留首个 `cache_control` | ✅ 单测 |
-| O7 | 真机：`deepseek-flash` 在极简 system 下仍会调工具（**风险项**：`agent/prompt_builder.py:362` 把 `deepseek` 列入 `TOOL_USE_ENFORCEMENT_MODELS`，宿主的 "You MUST use your tools…" 会一并被替换掉） | 🔒 未验证 |
+| O7 | `scripts/patch-hermes.sh check` 返回 0（已应用）且 `revert` 可撤销；宿主升级后重跑 `apply` | ✅ 本机 |
+| O8 | 真机：`deepseek-flash` 在极简 system 下仍会调工具（**风险项**：`agent/prompt_builder.py:362` 把 `deepseek` 列入 `TOOL_USE_ENFORCEMENT_MODELS`，宿主的 "You MUST use your tools…" 会一并被替换掉） | 🔒 未验证 |
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

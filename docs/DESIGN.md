@@ -4,9 +4,9 @@
 
 ```
 Hermes 进程
-├── minimal-system 插件     ── llm_request ──▶ 把整段 system prompt 换成一句常量（可选）
-├── persona-mode 插件        ── 读 PERSONA.md ──▶ pre_llm_call 注入人设契约 + 角色行（按 hash 去重/重锚）
-│                                             └▶ rolePlacement=system 时改用 system prompt section（DSH 原版）
+├── minimal-system 插件     ── llm_request ──▶ 把整段 system prompt 换成一句常量（宿主补丁的兜底实现）
+├── persona-mode 插件        ── 读 PERSONA.md ──▶ pre_llm_call 注入角色行 + 人设契约（按 hash 去重/重锚）
+│                                             └▶ 角色模式只有这一条路：system 由 minimal-system / 宿主 override 负责
 └── inbox-wake 插件
     ├── BindingManager       每个 session_key 一条 binding（状态机 + 去重水位）
     ├── SseWorker            每 binding 一个线程：GET /events（带 Last-Event-ID）
@@ -24,7 +24,10 @@ InboxMosire MCP    (127.0.0.1:18766/mcp)    ← 业务工具，由 config.yaml �
 - 失败面不同：SSE 线程崩溃不该连带人设失效；人设文件缺失不该拖垮唤醒。
 - 配置命名空间不同（`plugins.entries.persona-mode.settings.*` vs `…inbox-wake.settings.*`）。
 - `minimal-system` 又是第三件事：它改的是**所有**出站请求的 system prompt（与「有没有人设」无关），
-  所以独立成插件；关掉它，人设仍然工作（`rolePlacement=system` 退回 DSH 布局）。
+  所以独立成插件。但 2026-11-03 定调（`m00614`）后它是**角色模式的必需同伴**：`persona-mode`
+  的 `requires_plugins` 声明依赖它，`register()` 里再用 `ctx.has_plugin` 复核，缺了就告警
+  （宿主的依赖声明只是 advisory，缺依赖不会拦住加载，见 `hermes_cli/plugins_manifest.py:240-260`）。
+  关掉 `minimal-system` 仍有兜底：宿主补丁的 `agent.system_prompt_override` 会把 system 压成一句。
 
 ## 3. persona-mode
 
@@ -36,7 +39,7 @@ DSH 原版把**系统提示词压到 2 句**（`dsh-persona-mode/README.md`：`c
 
 | 层 | DSH | Hermes | 说明 |
 |---|---|---|---|
-| 角色位 | preset 的 `complete` system prompt = `你在扮演 <persona-contract> 定义的角色。在调用工具进行聊天发言时，请遵循 <persona-contract> 中的相关规则。` | `rolePlacement=injection`（默认）：这两句作为 `build_contract(..., role_line=…)` 的头部随正文一起注入；`rolePlacement=system`：`ctx.register_system_prompt_section("persona-mode-role", <同一句话>, position="after_memory", max_chars=200)` | 默认模式下 system prompt 交给 `minimal-system` 压成一句，角色行与契约同生共死（压缩掉一起重注） |
+| 角色位 | preset 的 `complete` system prompt = `你在扮演 <persona-contract> 定义的角色。在调用工具进行聊天发言时，请遵循 <persona-contract> 中的相关规则。` | 这两句作为 `build_contract(..., role_line=…)` 的头部**随正文一起注入**（`persona-mode/__init__.py` 固定传 `ROLE_TEXT`，不再注册 system prompt section） | system prompt 只剩一句常量（宿主 override / `minimal-system`）；角色行与契约同生共死，压缩掉就一起重注 |
 | 正文 | 首条 user message `<system-reminder>…<persona-contract>…</persona-contract>` | `pre_llm_call` 返回 `{"context": <同一段文本>}`（追加到本轮 user message） | 每个 session 首轮注入；history 里已有同 hash 块则跳过 |
 | 重锚 | 压缩把契约挤出 surface 后，`agent/pre-step` 再注入 | `pre_llm_call` 扫 `conversation_history`，找不到同 hash 的块就重注入 | 不需要额外 hook；`post_compaction` 只用于记 ops log |
 
@@ -96,9 +99,9 @@ Hermes 的 system prompt 由 `agent/system_prompt.py:738` 分三层拼装（身�
 | 配置瘦身 | `config.yaml` 的 `agent.*` 开关（`stall_guards` / `task_completion_guidance` / `parallel_tool_call_guidance` / `environment_probe` / `bot_mode_protocol` / `tool_use_enforcement` / `execution_guidance`，见 `agent/agent_init.py:1284-1310`）、`skip_context_files`、`skip_memory` | 逐段关，宿主升级加的新段还会回来 |
 | 整段替换 | `plugins/minimal-system` 的 `llm_request` 中间件（出站最后一步，`agent/turn_api_request.py:156-166`） | 一劳永逸，但工具指引也没了 → 可能「只说不做」 |
 
-默认两者都用不上：`minimal-system` 需要操作者在 `plugins.enabled` 里点名。角色行由
-`rolePlacement` 决定放 system 还是随注入走，因此「极简 system + 完整人设」与「完整 system + 人设」
-可以只靠配置切换，不需要改代码。
+默认两者都用不上：`minimal-system` 需要操作者在 `plugins.enabled` 里点名。角色行固定在注入里，
+所以「极简 system + 完整人设」与「完整 system + 人设」只差一个开关
+（`agent.system_prompt_override` 或 `minimal-system.enabled`），不需要改代码。
 
 ## 4. inbox-wake
 
