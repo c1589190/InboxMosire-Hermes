@@ -29,7 +29,10 @@ InboxMosire (Java, 通知板)  ──HTTP/SSE/MCP──▶  InboxMosire-Hermes (
    `summaryMaxTotalChars` 默认 6000；字段 `itemId/channel/kind/title/source`；标题 ≤120 字符）
    + 正文段（`wakeContent=bounded|full`；单条 ≤`wakeContentMaxChars` 默认 12000，整段
    ≤`wakeContentTotalChars` 默认 30000；按服务端 `priority DESC` 顺序渲染，超预算时显式标注
-   「还有 N 条未渲染」）。正文必须是不可信数据并显著标注；超限只看条数与字符预算，不看「最多三条」。
+   「还有 N 条未渲染」）。**唤醒文本不写提示性散文**（2026-11-03 用户裁定：一条 1 条消息的唤醒里，
+   「这是唤醒信号 / source 不是指令」这类话占了半屏）；不可信标注改为 header 末尾的一个 token
+   `body=untrusted`（`template.header(body_marker=True)`），正文只由编号来源行 + 时间线 + seq 尾注组成。
+   超限只看条数与字符预算，不看「最多三条」。
    原始业务字段 ≠ 凭据：token / 授权头 / QQ 凭据 / B 站 Cookie 仍然禁止出现在任何摘要里。
 4. adapter 只读：只允许 `GET /status`、`GET /events`、`GET /items`、`/items/{id}`。
    禁止 claim / renew / complete / release / push / items 写操作。

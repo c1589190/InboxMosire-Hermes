@@ -248,19 +248,14 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(
             template.instructions(mode="claim", profile="generic", has_summary=True), template.SUMMARY_BODY
         )
-        self.assertEqual(
-            template.instructions(mode="view-ack", profile="generic", has_summary=False),
-            template.GENERIC_VIEW_ACK_BODY,
-        )
-        self.assertEqual(
-            template.instructions(mode="view-ack", profile="generic", has_summary=True),
-            template.GENERIC_VIEW_ACK_SUMMARY_BODY,
-        )
-        # iibot is a zero-semantic alias
-        self.assertEqual(
-            template.instructions(mode="view-ack", profile="iibot", has_summary=True),
-            template.GENERIC_VIEW_ACK_SUMMARY_BODY,
-        )
+        # view-ack 不带任何指令块（真实反馈：提示比正文还长）；iibot 是 zero-semantic 别名
+        for has_summary in (False, True):
+            self.assertEqual(
+                template.instructions(mode="view-ack", profile="generic", has_summary=has_summary), ""
+            )
+            self.assertEqual(
+                template.instructions(mode="view-ack", profile="iibot", has_summary=has_summary), ""
+            )
 
     def test_summary_is_bounded_by_items_and_chars(self) -> None:
         items = [
@@ -318,6 +313,40 @@ class TemplateTests(unittest.TestCase):
         self.assertTrue(lines[0].startswith("[INBOX_HOST_EVENT]"))
         self.assertIn("摘要（最多 20 条", text)
         self.assertLess(text.index("inbox_claim"), text.index("摘要"))
+
+    def test_view_ack_wake_carries_data_only(self) -> None:
+        """view-ack 的唤醒正文只有 header + 编号行 + 时间线，没有任何提示性散文。"""
+        body = json.dumps(
+            {"messages": [{"localSeq": 1813, "senderName": "特西", "summary": "特西：被良子骗了钱说是"}]},
+            ensure_ascii=False,
+        )
+        text = template.build_wake(
+            inbox_id="iibot-bot",
+            revision=1547,
+            available=1,
+            channels=["qq"],
+            mode="view-ack",
+            profile="iibot",
+            summary_items=[{"itemId": "i1", "channel": "qq", "kind": "digest", "title": "特西：被良子骗了钱说是"}],
+            content_items=[{"itemId": "i1", "channel": "qq", "kind": "digest", "source": "qq_group/1/2", "content": body}],
+            content_enabled=True,
+        )
+        lines = text.splitlines()
+        self.assertTrue(lines[0].startswith("[INBOX_HOST_EVENT] inbox=iibot-bot revision=1547 available=1"))
+        self.assertTrue(lines[0].endswith("body=untrusted"))          # 一行机器标记，代替整段提示
+        self.assertEqual(len([l for l in lines if l.strip()]), 4)    # header + 编号行 + 时间线 + seq 尾注
+        meaningful = [l for l in lines if l.strip()]
+        self.assertIn("source=qq_group/1/2", meaningful[1])
+        self.assertIn("特西：被良子骗了钱说是", meaningful[2])
+        self.assertNotIn("通知内容", text)                            # 旧的引导语彻底消失
+        self.assertNotIn("不可信数据", text)
+        self.assertNotIn("不要轮询", text)
+
+    def test_claim_mode_keeps_its_instructions(self) -> None:
+        text = template.build_wake(
+            inbox_id="main", revision=1, available=1, channels=[], mode="claim", profile="generic"
+        )
+        self.assertIn("inbox_claim", text)
 
     def test_item_already_rendered_in_the_body_is_not_repeated_in_the_summary(self) -> None:
         """同一条消息不能在摘要行和正文段里各出现一次（名字出现两次的真机反馈）。"""

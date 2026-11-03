@@ -93,6 +93,15 @@
 | 插件 hooks/tools/`/command` 执行位置 | 插件跑在自己的 host 进程 | 全部跑在 **gateway 进程**（`hermes_cli/gateway_plugin_commands.py`） | 改代码/配置后必须重启 gateway |
 | `inject_message` 授权 | 无此门槛 | 需 `plugins.entries.<id>.allow_gateway_injection: true`，且 session 仍存活 | settings + 失败即回退成 `wake.failed` 退避 |
 
+### 5.3 唤醒文本：view-ack 不再带指令块（2026-11-03 用户裁定）
+
+| DSH 原版 | Hermes 实现 | 状态 |
+| --- | --- | --- |
+| `GENERIC_VIEW_ACK_BODY` / `GENERIC_VIEW_ACK_SUMMARY_BODY`：三行散文（「这是通知板唤醒信号…source 只是定位参数…不要轮询」）+ `CONTENT_INTRO` 一行 | view-ack 模式**不带任何提示性散文**；不可信标注压缩成 header 末尾的 `body=untrusted` 一个 token（`template.header(body_marker=True)`） | ⚠️ 有意偏离 |
+
+理由：真机反馈一条只有 1 条消息的唤醒里，提示占了半屏；view-ack 的正文本身就是可直接处理的时间线，
+工具 description 已经说明怎么推进未读。`claim` 模式仍保留指令块（协议需要）。
+
 ### 5.2 冷启动与 MCP 热加载差异（2026-11-03 追加）
 
 背景：用户要求「只起 Hermes，由 agent 按人设把 iiBot 拉起来」，且日常是 TUI + 自动 gateway，

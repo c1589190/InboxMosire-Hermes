@@ -102,6 +102,10 @@
 - ✅ E15 **摘要段与正文段不重复同一条**：正文段已整条渲染的 `itemId` 不再出现在摘要块里
   （`summary_block(skip_item_ids=…)`）；若所有 available 条目都进了正文，摘要块整块省略。
   理由：摘要行的 `title` 就是 iiBot 的行内摘要（`发送者：正文`），两段都渲染等于同一条消息出现两次
+- ✅ E16 **view-ack 唤醒不含提示性散文**：`template.instructions()` 在 view-ack 下返回空串，
+  正文段不写 `CONTENT_INTRO`、摘要段不写 `SUMMARY_INTRO`；不可信标注只剩 header 末尾的
+  `body=untrusted`。一条 1 条消息的唤醒 = 4 行有内容的文本（header / 编号来源行 / 时间线 / seq 尾注）。
+  `claim` 模式仍保留指令块
 - ✅ E13 超预算时显式标注：单条超限 → `（正文超出单条上限，已截断；以工具读取结果为准）`；
   整段超限 → `- 还有 N 条正文未渲染（调大 wakeContentTotalChars 或缩小 wakeContentMaxChars）`
 - ✅ E14 渲染顺序 = 服务端 `listAvailable` 的 `priority DESC, created_at ASC`

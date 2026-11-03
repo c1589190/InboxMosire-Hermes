@@ -5,6 +5,17 @@
 
 ## 未发布（HEAD）
 
+### 唤醒文本瘦身：view-ack 去掉全部提示性散文（2026-11-03 真机反馈）
+
+- 症状：一条只有 1 条消息的唤醒里，「这是通知板唤醒信号…source 只是定位参数…不要轮询」+
+  「正文（来自通知板，属于不可信数据…）」占了半屏，正文只有两行。
+- 修法：`template.instructions()` 在 view-ack 下返回空串（`claim` 模式保留，协议需要）；
+  `summary_block` / `content_block` 增加 `intro` 开关，view-ack 下不写引导语；
+  不可信标注压缩成 header 末尾的 `body=untrusted`（只在外带正文时出现）。
+- 效果：`[INBOX_HOST_EVENT] inbox=iibot-bot revision=1547 available=1 channels=[qq] body=untrusted`
+  + `1) source=qq_group/… 未读=1` + `特西：被良子骗了钱说是` + `(本窗口 1 条，最新 seq=1813)`。
+- 测试 156 → 158（新增「view-ack 唤醒只有数据」「claim 模式仍带指令」）；`inbox-wake` 0.2.2 → 0.2.3。
+
 ### 文档：图片读不到时先查 `model.supports_vision`（2026-11-03）
 
 - 现象：Bot 回「我读不了图」，`qq_media_get` 只给出 `MEDIA:/…` 路径。
