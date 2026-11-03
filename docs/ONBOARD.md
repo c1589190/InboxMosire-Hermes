@@ -22,7 +22,7 @@
 >    - `control`: `host 127.0.0.1` / `port 8765` / `path /mcp/bot`
 >    - `inbox`: `inboxId` / `apiHost 127.0.0.1` + `apiPort 46500` / `mcpHost 127.0.0.1` + `mcpPort 46501` / `mcpPath /mcp`
 >    - `accounts.main.oneBot`: `eventWebSocketUri` / `httpBaseUri`（NapCat 的地址，NapCat 本身不归这个 jar 管）
->    - 可选 `messageBoard`: `contextMessages` / `contextMaxChars` / `summaryMaxChars`（默认 6 / 1200 / 1000）
+>    - 可选 `messageBoard`（推荐）：`maxPreviewMessages: 50`（未读上限）、`contextMessages: 0` + `contextMaxChars: 0`（**不要**把旧消息塞进板，Agent 需要时自己 read）、`summaryMaxChars: 4000`（单条摘要长度）
 > 3. 凭据只放 env 文件（`chmod 600`），由启动脚本注入，**不要写进命令行**：
 >    ```bash
 >    cat > run/boot-env.sh <<'SH'

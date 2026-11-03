@@ -138,18 +138,14 @@ def content_parts(
 ) -> tuple[str, str]:
     """Split a digest ``content`` into ``(meta, timeline)``.
 
-    ``meta`` 是板头（未读条数/唤醒原因，**不含来源**——来源由 ``source_ref(item)`` 提供，
-    渲染时挂在编号那一行，避免同一行重复两次）；``timeline`` 是合并后的逐条时间线。
+    **只渲染未读（``messages``）**：digest 里的 ``context`` 是更早的已读消息，Agent 需要时
+    自己调 ``qq_conversation_read`` 去看，不该在唤醒里重复占用上下文（2026-11-03 真机反馈：
+    一条新消息的唤醒里被补进了 7 条旧消息）。
+
+    ``summary`` 由 iiBot 的 ``MessageSummaryBuilder`` 生成，形状已经是
+    ``发送者（备注：…）：正文``，所以这里**不再补发送者**，否则名字会出现两次。
+
     不是我们认识的 digest 时返回 ``("", raw)``。
-    """
-    """Render an Inbox item's ``content`` into one chronological transcript.
-
-    iiBot 的 digest 把整份 ``InboxDigest`` 序列化成 JSON 放进 content。这个窗口本身就是
-    「定死的滚动窗口」：``context``（更早几条）+ ``messages``（未读），两者按 ``localSeq``
-    本就是同一段连续对话。所以这里把它们**合并成一条时间线**渲染成
-    ``名字：正文``，不拆「待处理 / 上文」两段——窗口末尾就是最新一条。
-
-    不是 JSON、或不是这个形状时原样返回。
     """
     if not isinstance(raw, str):
         raw = str(raw or "")
@@ -166,40 +162,23 @@ def content_parts(
     if not isinstance(messages, list) or not messages:
         return "", raw
 
-    window: list[Any] = []
-    context = payload.get("context")
-    if isinstance(context, list):
-        window.extend(context)
-    window.extend(messages)
-    # context 与 messages 可能重叠（上一轮已读的尾巴），按 localSeq 去重后统一按时间排序。
-    ordered: list[Any] = []
-    seen: set[Any] = set()
-    for message in window:
-        if not isinstance(message, Mapping):
-            continue
-        seq = message.get("localSeq")
-        if seq is not None:
-            if seq in seen:
-                continue
-            seen.add(seq)
-        ordered.append(message)
-    if any(isinstance(m, Mapping) and m.get("localSeq") is not None for m in ordered):
-        ordered.sort(key=lambda m: (m.get("localSeq") is None, m.get("localSeq") or 0))
+    rows: list[Any] = [m for m in messages if isinstance(m, Mapping)]
+    if any(m.get("localSeq") is not None for m in rows):
+        rows.sort(key=lambda m: (m.get("localSeq") is None, m.get("localSeq") or 0))
 
     def render(message: Mapping[str, Any]) -> str:
         sender = clean_text(
             message.get("senderName") or message.get("senderId") or "?", 24
         ) or "?"
-        body = message.get("summary") or message.get("text") or ""
+        # summary 是 iiBot 生成的一整行（已含「发送者：」前缀），原样用；
+        # 只有缺 summary 的旧格式才自己拼前缀，避免名字出现两次。
+        if message.get("summary"):
+            return clean_text(message.get("summary"), per_message_chars)
+        body = message.get("text") or ""
         if not body:
             # 媒体消息：板里只有占位符（如「[图片]」），正文留在消息板上。
             body = message.get("nonTextSummary") or ""
-        body = clean_text(body, per_message_chars)
-        if not body:
-            body = "(空消息)"
-        note = clean_text(message.get("note"), 60)
-        if note:
-            body = f"{body}（备注：{note}）"
+        body = clean_text(body, per_message_chars) or "(空消息)"
         return f"{sender}：{body}"
 
     head: list[str] = []
@@ -214,15 +193,15 @@ def content_parts(
 
     lines: list[str] = []
     shown = 0
-    for message in ordered:
+    for message in rows:
         if shown >= max_messages:
-            lines.append(f"(还有 {len(ordered) - shown} 条未渲染)")
+            lines.append(f"(还有 {len(rows) - shown} 条未渲染)")
             break
         lines.append(render(message))
         shown += 1
     newest = payload.get("toSeq")
     if newest is None:
-        seqs = [m.get("localSeq") for m in ordered if m.get("localSeq") is not None]
+        seqs = [m.get("localSeq") for m in rows if m.get("localSeq") is not None]
         newest = max(seqs) if seqs else None
     if newest is not None:
         lines.append(f"(本窗口 {shown} 条，最新 seq={newest})")

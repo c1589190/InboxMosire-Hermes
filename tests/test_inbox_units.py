@@ -68,7 +68,7 @@ class SafeTests(unittest.TestCase):
 
     def test_content_text_renders_digest_messages(self) -> None:
         text = safe.content_text(
-            '{"threadId":"t","messages":[{"localSeq":11,"senderName":"小明","summary":"在吗"}]}'
+            '{"threadId":"t","messages":[{"localSeq":11,"senderName":"小明","summary":"小明：在吗"}]}'
         )
         self.assertIn("小明：在吗", text)
         self.assertNotIn("待处理", text)  # 不再拆「待处理 / 上文」两段
@@ -83,17 +83,17 @@ class SafeTests(unittest.TestCase):
                 "source": "qq_group/1/2",
                 "unreadCount": 2,
                 "messages": [
-                    {"localSeq": 1, "senderName": "甲", "summary": long_body},
-                    {"localSeq": 2, "senderName": "乙", "summary": "第二条"},
+                    {"localSeq": 1, "senderName": "甲", "summary": "甲：" + long_body},
+                    {"localSeq": 2, "senderName": "乙", "summary": "乙：第二条"},
                 ],
-                "context": [{"localSeq": 0, "senderName": "丙", "summary": "上文"}],
+                "context": [{"localSeq": 0, "senderName": "丙", "summary": "丙：上文"}],
             },
             ensure_ascii=False,
         )
         text = safe.content_text(payload)
         self.assertIn("未读=2", text)
         self.assertIn("乙：第二条", text)
-        self.assertIn("丙：上文", text)
+        self.assertNotIn("丙：上文", text)  # 旧消息不注入：Agent 需要时自己 read
         self.assertGreater(len(text), 1500)  # 长正文完整保留
 
     def test_content_text_keeps_media_placeholders(self) -> None:
@@ -106,20 +106,23 @@ class SafeTests(unittest.TestCase):
         self.assertIn("甲：[图片]", text)
         self.assertNotIn("messageKey", text)
 
-    def test_content_text_merges_context_and_messages_into_one_timeline(self) -> None:
-        """context 与 messages 本来就是同一段滚动窗口：合并、按 localSeq 排序、去重。"""
+    def test_content_text_renders_only_the_unread_window(self) -> None:
+        """只渲染未读（messages）；context 是已读的旧消息，Agent 需要时自己 read。
+
+        2026-11-03 真机反馈：一条新消息的唤醒里被补进了 7 条旧消息。
+        """
         payload = json.dumps(
             {
                 "source": "qq_group/1/2",
                 "unreadCount": 2,
                 "toSeq": 12,
                 "context": [
-                    {"localSeq": 10, "senderName": "丙", "summary": "更早"},
-                    {"localSeq": 11, "senderName": "甲", "summary": "在吗"},
+                    {"localSeq": 10, "senderName": "丙", "summary": "丙：更早"},
+                    {"localSeq": 11, "senderName": "甲", "summary": "甲：在吗"},
                 ],
                 "messages": [
-                    {"localSeq": 11, "senderName": "甲", "summary": "在吗"},  # 与 context 重叠
-                    {"localSeq": 12, "senderName": "乙", "summary": "在的"},
+                    {"localSeq": 11, "senderName": "甲", "summary": "甲：在吗"},
+                    {"localSeq": 12, "senderName": "乙", "summary": "乙：在的"},
                 ],
             },
             ensure_ascii=False,
@@ -127,8 +130,19 @@ class SafeTests(unittest.TestCase):
         meta, timeline = safe.content_parts(payload)
         self.assertEqual(meta, "未读=2")  # 来源不在这里重复，由渲染方挂在编号行
         lines = timeline.splitlines()
-        self.assertEqual(lines[0:3], ["丙：更早", "甲：在吗", "乙：在的"])
-        self.assertEqual(lines[3], "(本窗口 3 条，最新 seq=12)")
+        self.assertEqual(lines[0:2], ["甲：在吗", "乙：在的"])  # 只有未读，且去重
+        self.assertEqual(lines[2], "(本窗口 2 条，最新 seq=12)")
+        self.assertNotIn("丙：更早", timeline)
+
+    def test_sender_name_is_not_rendered_twice(self) -> None:
+        """iiBot 的 summary 已经是「发送者：正文」，渲染方不能再补一遍。"""
+        payload = json.dumps(
+            {"messages": [{"localSeq": 7, "senderName": "小明", "summary": "小明：在吗"}]},
+            ensure_ascii=False,
+        )
+        _, timeline = safe.content_parts(payload)
+        self.assertEqual(timeline.splitlines()[0], "小明：在吗")
+        self.assertEqual(timeline.count("小明"), 1)
 
     def test_item_content_is_bounded(self) -> None:
         view = safe.item_content({"itemId": "i1", "kind": "message", "content": "x" * 100}, max_chars=10)
@@ -201,8 +215,8 @@ class ContentBlockTests(unittest.TestCase):
             {
                 "source": "qq_group/1/2",
                 "messages": [
-                    {"localSeq": 1, "senderName": "甲", "summary": "在吗"},
-                    {"localSeq": 2, "senderName": "乙", "summary": "在"},
+                    {"localSeq": 1, "senderName": "甲", "summary": "甲：在吗"},
+                    {"localSeq": 2, "senderName": "乙", "summary": "乙：在"},
                 ],
             },
             ensure_ascii=False,

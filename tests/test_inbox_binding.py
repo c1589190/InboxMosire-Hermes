@@ -409,8 +409,8 @@ class WakeDecisionTests(Base):
                     {
                         "threadId": "qq_group/1/2",
                         "messages": [
-                            {"localSeq": 11, "senderName": "小明", "summary": "在吗"},
-                            {"localSeq": 12, "senderName": "小王", "summary": "在的"},
+                            {"localSeq": 11, "senderName": "小明", "summary": "小明：在吗"},
+                            {"localSeq": 12, "senderName": "小王", "summary": "小王：在的"},
                         ],
                     },
                     ensure_ascii=False,

@@ -88,11 +88,17 @@
   服务端 `channels()` 支持重复键（`InboxHttpServer.java:827-848`）；绑定 `channels` 为空则不传
 - ✅ E9 `summaryMaxItems` 不再被硬钳到 3（1..50，默认 20），字符预算 `summaryMaxTotalChars`（默认 6000）
   仍是主护栏；`wakeContentMaxChars` / `wakeContentTotalChars` 默认 12000 / 30000
-- ✅ E11 **正文段 = 每个来源一条时间线**：`safe.content_parts()` 把 digest 的 `context` 与 `messages`
-  合并、按 `localSeq` 去重排序，渲染成 `名字：正文` 的连续对话（不再拆「待处理 / 上文」两段）；
-  来源挂在这一段的编号行（`1) source=qq_group/… 未读=3`），窗口末尾就是最新一条，
-  末尾补 `(本窗口 N 条，最新 seq=12)` 供 ack 使用
-- ✅ E12 纯媒体消息渲染成板里的占位符（`甲：[图片]`），不编造 `messageKey`
+- ❌ E11（2026-11-03 作废）原实现把 digest 的 `context` 与 `messages` 合并渲染成一条时间线：
+  真机反馈「触发注入的只有 1 条新消息，却补进了 7 条旧消息」→ 旧消息不该注入
+- ✅ E11′ **正文段只渲染未读（`messages`）**：`safe.content_parts()` 不再读 `context`；
+  旧消息由 Agent 需要时自己 `qq_conversation_read`/`qq_conversation_list` 去取
+  （对应 iiBot `messageBoard.contextMessages=0`，连 payload 里都不再带旧消息）
+- ✅ E11″ 未读数按 iiBot 的 `maxPreviewMessages` 截断（运行配置 50），截断时板头带
+  `还有更多未读`，Agent 继续用 `qq_conversation_read` 翻
+- ✅ E11‴ **发送者名字只出现一次**：iiBot 的 `MessageSummaryBuilder` 生成的 `summary`
+  已经是 `发送者（备注：…）：正文`，渲染方原样输出；只有缺 `summary` 的旧格式才补前缀
+- ✅ E12 纯媒体消息渲染成板里的占位符（`甲：[图片]`），不编造 `messageKey`；
+  `summary` 里由 iiBot 附带的 `(messageKey=…)` 原样保留，Agent 可直接调 `qq_media_get`
 - ✅ E13 超预算时显式标注：单条超限 → `（正文超出单条上限，已截断；以工具读取结果为准）`；
   整段超限 → `- 还有 N 条正文未渲染（调大 wakeContentTotalChars 或缩小 wakeContentMaxChars）`
 - ✅ E14 渲染顺序 = 服务端 `listAvailable` 的 `priority DESC, created_at ASC`

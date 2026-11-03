@@ -5,6 +5,19 @@
 
 ## 未发布（HEAD）
 
+### 唤醒正文只渲染未读 + 发送者名字去重（2026-11-03 真机反馈）
+
+- 症状①：触发唤醒的只有 1 条新消息，注入里却补了 7 条旧消息。
+  根因：`safe.content_parts()` 把 digest 的 `context` 与 `messages` 合并渲染。
+  修法：只渲染 `messages`（未读）；旧的让 Agent 自己 `qq_conversation_read`。
+  配套：运行配置 `messageBoard.contextMessages/contextMaxChars = 0`，payload 里不再带旧消息；
+  `maxPreviewMessages` 20 → 50。
+- 症状②：同一条注入里发送者名字出现两次。
+  根因：iiBot 的 `summary` 已是 `发送者：正文`，渲染方又补了一遍前缀。
+  修法：`summary` 原样输出，只有缺 `summary` 的旧格式才补前缀。
+- 测试：154 passed（新增「只渲染未读窗口」「名字不重复」两个反例）。
+
+
 ### 冷启动取证脚本 + 「第一推动力」约束（2026-11-03）
 
 - 新增 `scripts/acceptance-coldstart.sh`（`probe|stop|start|watch|all`）：采集三个端口、
