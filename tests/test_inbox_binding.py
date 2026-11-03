@@ -32,16 +32,33 @@ class FakeClient:
         self.status_error: client_mod.InboxError | None = None
         self.occupancy: list[tuple] = []
         self.event_timeouts: list = []
+        self.details: list[dict] = []
+        self.details_fetched: list[str] = []
+        self.item_error = None
+        self.status_channels: list[str] = []
+        self.items_channels: list[str] = []
 
-    def status(self, inbox_id: str) -> dict:
+    def status(self, inbox_id: str, *, channels=None) -> dict:
+        self.status_channels = list(channels or [])
         if self.status_error:
             raise self.status_error
         return dict(self.status_payload)
 
-    def items(self, inbox_id: str, *, limit: int = 3, channel=None) -> list[dict]:
+    def items(self, inbox_id: str, *, limit: int = 3, channel=None, channels=None) -> list[dict]:
+        self.items_channels = list(channels if channels is not None else ([channel] if channel else []))
         if self.items_error:
             raise self.items_error
         return [dict(item) for item in self.items_payload[:limit]]
+
+    def item(self, inbox_id: str, item_id: str) -> dict:
+        """列表视图没有 content，详情才有；测试夹具按真实契约分开。"""
+        self.details_fetched.append(item_id)
+        if self.item_error:
+            raise self.item_error
+        for entry in self.details:
+            if entry.get("itemId") == item_id:
+                return dict(entry)
+        raise client_mod.InboxError("ITEM_NOT_FOUND", f"没有 {item_id}")
 
     def put_occupancy(self, inbox_id: str, session_ref: str, lease_seconds: int = 300) -> dict:
         self.occupancy.append(("put", session_ref))
@@ -359,15 +376,91 @@ class WakeDecisionTests(Base):
         self.assertNotIn("正文不该出现", text)
 
     def test_wake_content_bounded_opt_in_includes_body(self):
+        """真实契约：列表视图没有 content，正文只在 GET /items/{id} 的详情里。"""
         self.config.wake_content = "bounded"
         self.seed()
         self.fake.status_payload = {"revision": 8, "available": 1}
+        # 列表里故意带 content：即便服务端将来回填，也只认详情（这里详情有别的正文）
         self.fake.items_payload = [
-            {"itemId": "i9", "channel": "qq", "kind": "mention", "title": "标题", "content": "正文出现了"}
+            {"itemId": "i9", "channel": "qq", "kind": "mention", "title": "标题", "content": "列表里的假正文"}
+        ]
+        self.fake.details = [
+            {"itemId": "i9", "channel": "qq", "kind": "mention", "content": "正文出现了"}
         ]
         self.wake()
         text, _ = self.injected[0]
         self.assertIn("正文出现了", text)
+        self.assertEqual(self.fake.details_fetched, ["i9"])
+
+    def test_wake_content_bounded_renders_digest_json_as_lines(self):
+        """iiBot 的 content 是整份 InboxDigest JSON：渲染成逐条列表，而不是一坨 JSON。"""
+        import json as _json
+
+        self.config.wake_content = "bounded"
+        self.seed()
+        self.fake.status_payload = {"revision": 8, "available": 1}
+        self.fake.items_payload = [{"itemId": "i9", "channel": "qq", "kind": "digest"}]
+        self.fake.details = [
+            {
+                "itemId": "i9",
+                "channel": "qq",
+                "kind": "digest",
+                "content": _json.dumps(
+                    {
+                        "threadId": "qq_group/1/2",
+                        "messages": [
+                            {"localSeq": 11, "senderName": "小明", "summary": "在吗"},
+                            {"localSeq": 12, "senderName": "小王", "summary": "在的"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+        self.wake()
+        text, _ = self.injected[0]
+        self.assertIn("[11 小明] 在吗", text)
+        self.assertIn("[12 小王] 在的", text)
+        self.assertNotIn("threadId", text)
+
+    def test_wake_content_skips_items_whose_detail_fails(self):
+        self.config.wake_content = "bounded"
+        self.seed()
+        self.fake.status_payload = {"revision": 8, "available": 1}
+        self.fake.items_payload = [
+            {"itemId": "i1", "channel": "qq", "kind": "mention"},
+            {"itemId": "i2", "channel": "qq", "kind": "mention"},
+        ]
+        self.fake.details = [{"itemId": "i2", "channel": "qq", "kind": "mention", "content": "只有这条"}]
+        self.fake.item_error = None
+        self.wake()
+        text, _ = self.injected[0]
+        self.assertIn("只有这条", text)
+
+
+class ChannelScopeTests(Base):
+    """绑定限定了频道，就必须贯穿 /status 与 /items（否则多来源 inbox 的计数会串味）。"""
+
+    def test_bound_channels_are_sent_to_status_and_items(self) -> None:
+        self.seed(channels=["qq", "bili"])
+        self.fake.status_payload = {"revision": 3, "available": 0}
+        self.wake()
+        self.assertEqual(self.fake.status_channels, ["qq", "bili"])
+
+    def test_bound_channels_are_sent_to_the_summary_list(self) -> None:
+        self.seed(channels=["qq"])
+        self.fake.status_payload = {"revision": 3, "available": 1}
+        self.fake.items_payload = [{"itemId": "i1", "channel": "qq", "kind": "mention", "summary": "hi"}]
+        self.wake()
+        self.assertEqual(self.fake.items_channels, ["qq"])
+
+    def test_unbound_channels_means_no_filter(self) -> None:
+        self.seed()
+        self.fake.status_payload = {"revision": 3, "available": 1}
+        self.fake.items_payload = [{"itemId": "i1", "channel": "qq", "kind": "mention", "summary": "hi"}]
+        self.wake()
+        self.assertEqual(self.fake.status_channels, [])
+        self.assertEqual(self.fake.items_channels, [])
 
 
 class InjectHostTests(Base):
@@ -675,7 +768,7 @@ class AutoBindTests(Base):
         self.assertIsNotNone(record)
         self.assertEqual(record["inboxId"], "main")
         self.assertEqual(record["tokenRef"], f"file:{path}")
-        self.assertEqual(record["wakeMode"], "claim")
+        self.assertEqual(record["wakeMode"], "view-ack")  # 默认已从 claim 改成 view-ack
         self.assertEqual(self.fake.occupancy[0][0], "put")
         self.assertEqual(self.injected, [])  # bind 不注入，唤醒才注入
 

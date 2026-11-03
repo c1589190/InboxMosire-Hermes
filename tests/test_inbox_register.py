@@ -28,11 +28,14 @@ class FakeNetClient:
         self.status_payload = {"revision": 2, "available": 1}
         self.items_payload = [{"itemId": "i1", "channel": "qq", "kind": "mention", "title": "hi"}]
 
-    def status(self, inbox_id):
+    def status(self, inbox_id, *, channels=None):
         return dict(self.status_payload)
 
-    def items(self, inbox_id, *, limit=3, channel=None):
+    def items(self, inbox_id, *, limit=3, channel=None, channels=None):
         return [dict(item) for item in self.items_payload[:limit]]
+
+    def item(self, inbox_id, item_id):
+        return {"itemId": item_id, "channel": "qq", "kind": "mention", "content": "正文"}
 
     def put_occupancy(self, inbox_id, session_ref, lease_seconds=300):
         return {}

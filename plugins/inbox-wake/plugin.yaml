@@ -71,7 +71,7 @@ config_schema:
     description: 指向一个 0600 权限的文件，内容为 Bearer token；token 不写进 config.yaml。
   wakeMode:
     type: str
-    label: 唤醒模式（claim / view-ack）
+    label: 唤醒模式（view-ack 默认 / claim）
   wakeProfile:
     type: str
     label: 唤醒文案档（generic / iibot）
@@ -80,7 +80,7 @@ config_schema:
     label: 唤醒时附带有界摘要
   summaryMaxItems:
     type: int
-    label: 摘要最多条目数（1-3 建议）
+    label: 摘要最多条目数（1-50，字符预算才是主护栏）
   wakeContent:
     type: str
     label: 唤醒正文策略（off / bounded / full）

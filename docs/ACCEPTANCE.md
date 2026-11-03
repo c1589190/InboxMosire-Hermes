@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（139 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（149 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -72,7 +72,23 @@
 - ✅ E2 摘要行格式 `- {"itemId":…,"channel":…,"kind":…,"summary":…}`（`JSON.stringify` 等价）
 - ✅ E3 `kind` 截断到 40、`summary` 截断到 80、去换行与控制字符
 - ✅ E4 摘要块 ≥1200 字符时折叠为 `- 还有 N 条未展示`，且总量不超预算
-- ✅ E5 `wakeMode=view-ack` 时行内不含 `itemId`/`channel`，只含 `source`/`kind`/`summary`
+- ❌ E5（原声称）`wakeMode=view-ack` 时行内只含 `source`/`kind`/`summary`：**不成立**。
+  `summary_block()` 只有一种渲染器，行内是 `{itemId, channel, kind, title, source}`。
+  2026-11-03 起按真实行为验收（见 E5′）
+- ✅ E5′ 摘要行字段 = `itemId/channel/kind/title/source`；`source` 缺失时**不写该键**
+  （`safe.item_brief()`）
+- ✅ E6 **`source` 是字符串地址时也保留**（iiBot 写 `qq_group/<account>/<group>`）：
+  `safe.source_ref()` 走白名单 `^[A-Za-z0-9._:/@+\-]{1,256}$`；对象形状仍接受
+  `address`/`canonical`/`id`；命中不了白名单就丢弃（不把可疑字符串塞进唤醒正文）
+- ✅ E7 **正文段真的能读到正文**：列表接口（GET /items）返回的 ItemSummaryView 没有 `content`，
+  `BindingManager._content_items()` 改为逐条 GET /items/{id}（`InboxClient.item()`，一直存在但从没被调用）；
+  单条失败跳过不影响其他条目；iiBot 的 digest JSON 由 `safe.content_text()` 展开成
+  `[localSeq sender] summary` 逐行，而不是整份 JSON
+- ✅ E8 **频道过滤贯穿查询**：`status()` / `items()` 都带 `channel=`（重复键 + `doseq` 编码），
+  服务端 `channels()` 支持重复键（`InboxHttpServer.java:827-848`）；绑定 `channels` 为空则不传
+- ✅ E9 `summaryMaxItems` 不再被硬钳到 3（1..50，默认 5），字符预算 `summaryMaxTotalChars` 仍是主护栏
+- ✅ E10 默认 `wakeMode` 从 `claim` 改为 `view-ack`（iiBot 主流程是「读→ack 推进未读」；
+  非法值告警回退 view-ack）
 - 🟡 E6 固定指令段**永不**被截断（即使 content 段很长）
 - 🟡 E7 `wakeProfile=iibot` 的指令段与 `generic` 的对应关系符合 `docs/TOOLS.md` §4
 - ✅ E8 `summaryEnabled=false` → 只有 header + 指令段

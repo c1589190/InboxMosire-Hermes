@@ -5,6 +5,28 @@
 
 ## 未发布（HEAD）
 
+### 对齐真实 Inbox 契约：来源字符串、正文取详情、频道贯穿、默认 view-ack（2026-11-03）
+
+- **`source` 不再是对象**：Inbox 的 `source` 是字符串地址（iiBot 写
+  `qq_group/<account>/<group>`，`InboxHttpServer.ItemSummaryView.source` 也是 String）。
+  `safe.item_brief()` 旧实现只认 `{"id": …}` 形状 → 来源被整条丢弃，唤醒里只剩 `itemId`。
+  新增 `safe.source_ref()`：字符串走白名单 `^[A-Za-z0-9._:/@+\-]{1,256}$`，对象接受
+  `address`/`canonical`/`id`，命中不了就丢弃。
+- **正文真的能读到**：列表接口返回 `ItemSummaryView`（无 `content`），旧 `_content_items()`
+  直接拿列表渲染 → `wakeContent=bounded` 永远是空的。改为逐条 `GET /items/{id}`
+  （`InboxClient.item()` 早已存在但没人调用），单条失败跳过；新增 `safe.content_text()`
+  把 iiBot 的整份 `InboxDigest` JSON 展开成 `[localSeq sender] summary` 逐行。
+- **频道过滤贯穿**：`InboxClient.status()/items()` 增加 `channels`，用 `doseq=True` 发重复
+  `channel=` 键（服务端 `channels()` 支持重复键）；`_refresh_status()` / `_summary_items()` /
+  `_content_items()` 都传绑定的 `channels`。
+- **默认 `wakeMode` 改 `view-ack`**：iiBot 的主流程是「读 → ack 推进未读」，默认给 `claim`
+  会让没显式配置的 profile 拿到拿不动的指令。
+- **去掉「最多三条」**：`summaryMaxItems` 上限 3 → 50（默认 5），字符预算仍是主护栏；
+  `AGENTS.md` 的对应红线同步改成配置界定。
+- **测试** 139 → 149（来源字符串/恶意来源、digest 渲染、详情失败降级、频道贯穿、
+  limit 钳到 1..100、重复 `channel=` 编码）。
+
+
 ### 新增
 - `kit/`：一键发行包 —— `kit.sh`（`doctor|up|status|down|probe|token wake|program`）、`kit.env.example`、`引导.md`。`up` 一条命令完成：初始化数据目录 → 起 inboxd（API 18765 / MCP 18766）→ 签发两个最小权限 token（`0600`，只回显 credential_id）→ 挂 `mcp_servers` → 写插件设置 → 重启 gateway。
 - `autoBind`：会话首轮自动绑定（失败只写 warning，绝不打断 turn；同一会话只尝试一次）。

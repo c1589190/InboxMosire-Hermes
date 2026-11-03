@@ -35,9 +35,11 @@
 | `inbox_adapter_log`（`limit` 1–100，默认 20，仅本会话） | 同名工具，同默认值 | ✅ |
 | business tools 留在 `mcp__inbox-mosire__*`（program-owned MCP） | 由 `config.yaml` 的 `mcp_servers` 挂载 InboxMosire MCP（`url` + `headers.Authorization`），插件不镜像 | ✅ |
 | `/inbox [status|bind|unbind|retry|help]` | `register_command("inbox", …)`，同子命令同帮助文本 | ✅ |
-| `wakeMode: claim | view-ack` | 同枚举、同默认（`claim`） | ✅ |
+| `wakeMode: claim | view-ack` | 同枚举，但**默认已改为 `view-ack`**（iiBot 主流程是读→ack；claim 保留可用） | 🔁 |
 | wake profile 注册表（Cordis service `inboxWakeProfiles`，`generic` 内置 + `iibot` 零语义别名） | 无 service registry：profile 体在插件内置常量，`wakeProfile` 配置选择（`generic`/`iibot`） | 🔁 |
 | 每 session 一条 binding，`agent.id` 作 key | 每 `session_key` 一条 binding | 🔁 |
+| 摘要行带 `source`（Inbox 的 source 是字符串地址） | `safe.item_brief()` → `source` 字符串，白名单字符集；DSH 侧同样是字符串 | ✅ |
+| 唤醒正文从条目正文取（Inbox 列表视图不含 body） | `_content_items()` 逐条 GET /items/{id}（`InboxClient.item()`） | ✅ |
 
 ## 3. 唤醒逻辑与文本
 

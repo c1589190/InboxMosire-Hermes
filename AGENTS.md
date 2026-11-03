@@ -25,8 +25,10 @@ InboxMosire (Java, 通知板)  ──HTTP/SSE/MCP──▶  InboxMosire-Hermes (
    异常消息、提交内容。插件只持有 `INBOX_API_TOKEN_FILE` 的**路径**，值只在内存与
    `Authorization` 头里存在。
 2. token 文件权限必须 `0600`，插件启动时校验并在不满足时拒绝启动（fail closed）。
-3. 唤醒正文只放有界摘要（≤3 条；`itemId/channel/kind/source/summary`；标题 ≤80 字符；
-   摘要块总预算 1200 字符）。正文只能来自可选的 opt-in content 段，且必须标为不可信数据。
+3. 唤醒正文只放**有界**摘要（条数与字符预算由 `summaryMaxItems`（1–50，默认 5）与
+   `summaryMaxTotalChars`（默认 1200）界定；字段 `itemId/channel/kind/title/source`；标题 ≤80 字符）。
+   正文只能来自可选的 opt-in content 段（`wakeContent=bounded|full`），且必须标为不可信数据。
+   原始业务字段 ≠ 凭据：token / 授权头 / QQ 凭据 / B 站 Cookie 仍然禁止出现在任何摘要里。
 4. adapter 只读：只允许 `GET /status`、`GET /events`、`GET /items`、`/items/{id}`。
    禁止 claim / renew / complete / release / push / items 写操作。
 5. 真实外发工具（`qq_conversation_send`、`conversation_send`、B 站评论私信、好友审批）

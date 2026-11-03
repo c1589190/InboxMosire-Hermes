@@ -15,7 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from . import safe
 
@@ -124,9 +124,12 @@ class InboxClient:
     def _url(self, path: str, query: Optional[Mapping[str, Any]] = None) -> str:
         url = f"{self.base_url}{path}"
         if query:
-            cleaned = {k: str(v) for k, v in query.items() if v is not None and str(v) != ""}
+            cleaned = {
+                k: v for k, v in query.items() if v is not None and (v or v == 0)
+            }
             if cleaned:
-                url = f"{url}?{urllib.parse.urlencode(cleaned)}"
+                # doseq=True 让 list/tuple 变成重复的 key（服务端 channels() 支持 `channel=a&channel=b`）
+                url = f"{url}?{urllib.parse.urlencode(cleaned, doseq=True)}"
         return url
 
     def _request(
@@ -170,15 +173,32 @@ class InboxClient:
 
     # ---- API ------------------------------------------------------------
 
-    def status(self, inbox_id: str) -> dict[str, Any]:
-        data = self._request("GET", self._inbox_path(inbox_id, "/status"))
+    def status(
+        self, inbox_id: str, *, channels: Optional[Sequence[str]] = None
+    ) -> dict[str, Any]:
+        # 服务端 GET /status 支持 channel 过滤（InboxHttpServer.status → service.status(id, channels)）；
+        # 不传就是「整个 inbox」，多来源的 inbox 必须传，否则 available/revision 会混入别的频道。
+        data = self._request(
+            "GET",
+            self._inbox_path(inbox_id, "/status"),
+            query={"channel": list(channels) if channels else None},
+        )
         return data if isinstance(data, dict) else {}
 
-    def items(self, inbox_id: str, *, limit: int = 3, channel: Optional[str] = None) -> list[dict]:
+    def items(
+        self,
+        inbox_id: str,
+        *,
+        limit: int = 3,
+        channel: Optional[str] = None,
+        channels: Optional[Sequence[str]] = None,
+    ) -> list[dict]:
+        names = [c for c in (channels if channels is not None else ([channel] if channel else [])) if c]
         data = self._request(
             "GET",
             self._inbox_path(inbox_id, "/items"),
-            query={"limit": max(1, min(int(limit), 50)), "channel": channel or None},
+            # 服务端 listAvailable 的合法区间是 1..100（InboxService.MAX_REQUEST_ITEMS=50 是 claim 的上限）
+            query={"limit": max(1, min(int(limit), 100)), "channel": names or None},
         )
         if isinstance(data, dict):
             for key in ("items", "data", "results"):

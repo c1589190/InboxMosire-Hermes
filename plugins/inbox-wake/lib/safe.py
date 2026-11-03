@@ -63,6 +63,29 @@ def json_line(payload: Mapping[str, Any]) -> str:
     return json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
 
 
+#: Inbox 条目的 ``source`` 是**字符串地址**（iiBot 的 push 写 `source: "qq_group/<account>/<group>"`，
+#: InboxMosire 的 ItemSummaryView.source 也是 String）。只放行「像地址」的字符，空间/换行/引号一律丢。
+SOURCE_RE = re.compile(r"^[A-Za-z0-9._:/@+\-]{1,256}$")
+
+
+def source_ref(item: Any) -> str:
+    """Normalise one item's ``source`` to a plain address string (``""`` when unusable)."""
+    if not isinstance(item, Mapping):
+        return ""
+    source = item.get("source")
+    if isinstance(source, str):
+        text = source.strip()
+        return text if SOURCE_RE.match(text) else ""
+    if isinstance(source, Mapping):
+        for key in ("address", "canonical", "id"):
+            value = source.get(key)
+            if isinstance(value, str):
+                text = value.strip()
+                if SOURCE_RE.match(text):
+                    return text
+    return ""
+
+
 def item_brief(item: Any, *, max_title_chars: int = 80) -> Optional[dict[str, Any]]:
     """Bounded view of one inbox item: ids and a truncated title, never the raw body."""
     if not isinstance(item, Mapping):
@@ -77,10 +100,47 @@ def item_brief(item: Any, *, max_title_chars: int = 80) -> Optional[dict[str, An
         "kind": kind,
         "title": clean_text(item.get("title") or item.get("summary"), max_title_chars) or "(无标题)",
     }
-    source = item.get("source")
-    if isinstance(source, Mapping) and is_safe_id(source.get("id")):
-        brief["source"] = {"id": source["id"]}
+    ref = source_ref(item)
+    if ref:
+        brief["source"] = ref
     return brief
+
+
+def content_text(raw: Any) -> str:
+    """Render an Inbox item's ``content`` into readable text.
+
+    iiBot 的 digest 把整份 ``InboxDigest`` 序列化成 JSON 放进 content，
+    直接塞进唤醒正文会是一行 5000 字符的 JSON。这里把它展开成
+    ``[seq] sender: summary`` 的逐条列表（其余信封字段丢弃），
+    不是 JSON、或不是我们认识的形状时原样返回。
+    """
+    if not isinstance(raw, str):
+        raw = str(raw or "")
+    text = raw.strip()
+    if not text or not text.startswith("{"):
+        return raw
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return raw
+    if not isinstance(payload, Mapping):
+        return raw
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return raw
+    lines: list[str] = []
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        seq = message.get("localSeq")
+        sender = clean_text(message.get("senderName") or message.get("senderId") or "?", 32)
+        who = f"{seq} {sender}".strip() if seq is not None else sender
+        body = message.get("summary") or message.get("note") or message.get("text") or ""
+        body = clean_text(body, 400)
+        if not body:
+            body = clean_text(message.get("nonTextSummary"), 120) or "(无正文)"
+        lines.append(f"[{who}] {body}" if who else body)
+    return "\n".join(lines) if lines else raw
 
 
 def item_content(item: Any, *, max_chars: int) -> Optional[dict[str, Any]]:
@@ -91,7 +151,7 @@ def item_content(item: Any, *, max_chars: int) -> Optional[dict[str, Any]]:
     if not is_safe_id(item_id):
         return None
     raw = item.get("content") or item.get("body") or item.get("text") or ""
-    body = clean_text(raw, max_chars) if raw else ""
+    body = clean_text(content_text(raw), max_chars) if raw else ""
     if not body:
         return None
     return {

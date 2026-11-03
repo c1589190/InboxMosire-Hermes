@@ -834,7 +834,10 @@ class BindingManager:
     def _refresh_status(self, record: dict[str, Any]) -> dict[str, Any]:
         """GET /status and fold the truth back into the record (the SSE cursor may be stale)."""
         try:
-            payload = self._client(record).status(record["inboxId"])
+            # 绑定可能只看几个频道：status/items 都带上，否则多来源 inbox 的 available 会串味
+            payload = self._client(record).status(
+                record["inboxId"], channels=record.get("channels") or None
+            )
         except InboxError as exc:
             record["lastStatus"] = {
                 "revision": int(record.get("lastObservedRevision") or 0),
@@ -863,19 +866,44 @@ class BindingManager:
         config = self.config
         try:
             items = self._client(record).items(
-                record["inboxId"], limit=config.summary_max_items
+                record["inboxId"],
+                limit=config.summary_max_items,
+                channels=record.get("channels") or None,
             )
         except InboxError as exc:
             return [], 0, {"state": "failed", "code": exc.code, "message": safe.clean_text(str(exc), 160)}
         return items, 0, {"state": "ok", "code": None, "message": None}
 
     def _content_items(self, record: dict[str, Any]) -> list[dict]:
+        """Opt-in body preview: the list view has no ``content``, so fetch each detail.
+
+        列表接口（GET /items）只返回 ItemSummaryView（itemId/channel/kind/summary/title/source），
+        正文只在 GET /items/{id} 的 ItemDetailView 里。以前这里直接拿列表结果去渲染正文，
+        于是 ``wakeContent=bounded`` 永远是空的。现在逐条取详情，单条失败不影响其他条目。
+        """
         if self.config.wake_content == "off":
             return []
+        client = self._client(record)
         try:
-            return self._client(record).items(record["inboxId"], limit=self.config.summary_max_items)
+            listed = client.items(
+                record["inboxId"],
+                limit=self.config.summary_max_items,
+                channels=record.get("channels") or None,
+            )
         except InboxError:
             return []
+        details: list[dict] = []
+        for summary in listed:
+            item_id = summary.get("itemId") or summary.get("id")
+            if not safe.is_safe_id(item_id):
+                continue
+            try:
+                detail = client.item(record["inboxId"], item_id)
+            except InboxError:
+                continue
+            if isinstance(detail, dict) and detail:
+                details.append(detail)
+        return details
 
     def _maybe_wake(self, session_key: str, reason: str) -> None:
         record = self.store.get_binding(session_key)

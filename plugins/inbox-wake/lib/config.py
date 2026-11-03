@@ -17,7 +17,9 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 DEFAULT_API_URL = "http://127.0.0.1:18765"
 DEFAULT_INBOX_ID = "main"
-DEFAULT_WAKE_MODE = "claim"
+#: 默认唤醒协议。iiBot 的主流程是 view-ack（读→ack 推进未读），claim 只是另一套宿主协议；
+#: 默认给 claim 会让「按 view-ack 部署的 Bot」在没显式配置时拿到拿不动的指令。
+DEFAULT_WAKE_MODE = "view-ack"
 DEFAULT_WAKE_PROFILE = "generic"
 DEFAULT_WAKE_CONTENT = "bounded"
 
@@ -109,8 +111,10 @@ class Config:
         cfg.wake_profile = profile
 
         cfg.summary_enabled = safe.coerce_bool(get("summaryEnabled"), True)
+        # 「最多三条」是原先的人为限制：一张板可能有几十条来源消息，硬钳 3 条只会让
+        # Agent 反复补调工具。字符预算（summaryMaxTotalChars）才是真正的护栏。
         cfg.summary_max_items = safe.coerce_int(
-            get("summaryMaxItems"), 3, minimum=1, maximum=3
+            get("summaryMaxItems"), 5, minimum=1, maximum=50
         )
         cfg.summary_max_title_chars = safe.coerce_int(
             get("summaryMaxTitleChars"), 80, minimum=8, maximum=200

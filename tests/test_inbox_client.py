@@ -150,6 +150,26 @@ class ClientTests(TokenFileMixin, unittest.TestCase):
         items = client.items("main", limit=3)
         self.assertEqual(items[0]["itemId"], "i1")
 
+    def test_channels_are_sent_as_repeated_query_keys(self):
+        client = self.client()
+        url = client._url("/v1/inboxes/main/items", {"limit": 5, "channel": ["qq", "bili"]})
+        self.assertIn("channel=qq&channel=bili", url)
+        self.assertIn("limit=5", url)
+        # 空频道列表 = 不过滤（服务端 channels() 只认非空 channel 键）
+        self.assertEqual(
+            client._url("/v1/inboxes/main/status", {"channel": None}),
+            f"{self.base}/v1/inboxes/main/status",
+        )
+
+    def test_limit_is_clamped_to_the_server_range(self):
+        client = self.client()
+        seen = {}
+        client._request = lambda method, path, **kw: seen.update(kw) or {"items": []}
+        client.items("main", limit=500)
+        self.assertEqual(seen["query"]["limit"], 100)  # listAvailable 允许 1..100
+        client.items("main", limit=0)
+        self.assertEqual(seen["query"]["limit"], 1)
+
     def test_bad_token_maps_to_http_status(self):
         client = self.client(token="wrong")
         with self.assertRaises(client_mod.InboxError) as ctx:
