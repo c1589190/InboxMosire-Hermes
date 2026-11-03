@@ -9,6 +9,8 @@ that, so the adapter can never consume an item the agent never saw.
 from __future__ import annotations
 
 import logging
+import json
+import os
 import re
 import threading
 import time
@@ -45,6 +47,53 @@ def _ownership_key(record: dict[str, Any]) -> tuple[int, str]:
 def _recency_key(record: dict[str, Any]) -> str:
     """``updatedAt`` / ``createdAt`` are ISO-8601 strings; lexicographic order matches time order."""
     return str(record.get("updatedAt") or record.get("createdAt") or "")
+
+
+AUTH_ERROR_CODES = frozenset({"INBOX_AUTH", "UNAUTHORIZED", "UNAUTHENTICATED"})
+
+
+def _is_auth_error(exc: InboxError) -> bool:
+    return exc.status == 401 or exc.code in AUTH_ERROR_CODES
+
+
+DESCRIPTOR_FILE = "binding-descriptor.json"
+
+
+def descriptor_ref(token_ref: str, inbox_id: str) -> Optional[str]:
+    """Read ``binding-descriptor.json`` next to the token file and return its ``adapterTokenRef``.
+
+    iiBot re-issues ``dsh-wake.token`` on **every** boot and writes the matching descriptor
+    beside it. A plugin that only trusts ``config.yaml`` therefore 401s forever after the
+    runtime directory changes (bot -> bot2, laptop -> server). The descriptor is the runtime's
+    own statement of "this is the file you should be reading", and it sits in the same
+    directory as the token file the operator already configured.
+    """
+    try:
+        parsed = TokenRef.parse(token_ref)
+    except InboxError:
+        return None
+    if parsed.kind != "file" or not parsed.target:
+        return None
+    path = os.path.join(os.path.dirname(os.path.expanduser(parsed.target)), DESCRIPTOR_FILE)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("inboxId") not in (None, "", inbox_id):
+        # 描述文件描述的是另一个 inbox：不要拿它覆盖当前绑定。
+        return None
+    ref = payload.get("adapterTokenRef")
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    ref = ref.strip()
+    try:
+        TokenRef.parse(ref).resolve()
+    except InboxError:
+        return None
+    return ref
 
 
 def _is_local_session_key(session_key: str) -> bool:
@@ -183,6 +232,31 @@ class BindingManager:
         self._clients[key] = client
         return client
 
+    def _apply_descriptor(self, record: dict[str, Any]) -> bool:
+        """Adopt the runtime's own descriptor when it points somewhere else. True if adopted."""
+        ref = descriptor_ref(str(record.get("tokenRef") or ""), str(record.get("inboxId") or ""))
+        if not ref or ref == record.get("tokenRef"):
+            return False
+        record["tokenRef"] = ref
+        record["tokenRefSource"] = "descriptor"
+        self._clients.pop(record["sessionKey"], None)
+        self._log(record, "token.adopt", source="descriptor", inbox=record.get("inboxId"))
+        return True
+
+    def _call_with_token_heal(self, record: dict[str, Any], call):
+        """Run one Inbox call; on 401 adopt the runtime descriptor and retry once.
+
+        iiBot re-signs ``dsh-wake.token`` on every boot. Without this, a running gateway keeps
+        the stale token (``InboxClient`` caches it) and every wake silently 401s until the
+        process restarts — while the descriptor on disk already names the new file.
+        """
+        try:
+            return call()
+        except InboxError as exc:
+            if not _is_auth_error(exc) or not self._apply_descriptor(record):
+                raise
+            return call()
+
     def _runtime_for(self, session_key: str) -> Runtime:
         with self._lock:
             runtime = self._runtime.get(session_key)
@@ -289,6 +363,8 @@ class BindingManager:
                 self._log(record, "binding.passive", host=record.get("host"), reason="resume-skip")
                 continue
             try:
+                # 运行目录可能换了（bot -> bot2）：描述文件才是当前实例的权威。
+                self._apply_descriptor(record)
                 self._start(record, reason="resume")
                 started += 1
             except Exception as exc:
@@ -525,6 +601,9 @@ class BindingManager:
 
         api_base = str(pick("apiBaseUrl", self.config.api_url)).strip().rstrip("/")
         token_ref = str(pick("adapterTokenRef", self.config.adapter_token_file)).strip()
+        explicit_token_ref = bool(
+            params.get("adapterTokenRef") or descriptor.get("adapterTokenRef")
+        )
         try:
             parsed_ref = TokenRef.parse(token_ref)
             parsed_ref.resolve()
@@ -551,6 +630,10 @@ class BindingManager:
             session_id=str(pick("sessionId", session_key)),
         )
         record["host"] = capability
+        if not explicit_token_ref:
+            # 没人显式指定 token：配置里的路径可能还指着上一个运行目录（旧 token 已随 iiBot
+            # 重启重签）。同目录的 binding-descriptor.json 是当前实例自己写的，优先信它。
+            self._apply_descriptor(record)
         # manual = 会话里显式 /inbox bind；auto = autoBind。显式的那个钉住，不被后来者顶掉。
         record["bindSource"] = str(params.get("source") or "manual")
         if existing:
@@ -835,8 +918,11 @@ class BindingManager:
         """GET /status and fold the truth back into the record (the SSE cursor may be stale)."""
         try:
             # 绑定可能只看几个频道：status/items 都带上，否则多来源 inbox 的 available 会串味
-            payload = self._client(record).status(
-                record["inboxId"], channels=record.get("channels") or None
+            payload = self._call_with_token_heal(
+                record,
+                lambda: self._client(record).status(
+                    record["inboxId"], channels=record.get("channels") or None
+                ),
             )
         except InboxError as exc:
             record["lastStatus"] = {
@@ -865,10 +951,13 @@ class BindingManager:
         """Fetch the bounded summary view; failures degrade to a summary-less wake."""
         config = self.config
         try:
-            items = self._client(record).items(
-                record["inboxId"],
-                limit=config.summary_max_items,
-                channels=record.get("channels") or None,
+            items = self._call_with_token_heal(
+                record,
+                lambda: self._client(record).items(
+                    record["inboxId"],
+                    limit=config.summary_max_items,
+                    channels=record.get("channels") or None,
+                ),
             )
         except InboxError as exc:
             return [], 0, {"state": "failed", "code": exc.code, "message": safe.clean_text(str(exc), 160)}
@@ -883,12 +972,14 @@ class BindingManager:
         """
         if self.config.wake_content == "off":
             return []
-        client = self._client(record)
         try:
-            listed = client.items(
-                record["inboxId"],
-                limit=self.config.summary_max_items,
-                channels=record.get("channels") or None,
+            listed = self._call_with_token_heal(
+                record,
+                lambda: self._client(record).items(
+                    record["inboxId"],
+                    limit=self.config.summary_max_items,
+                    channels=record.get("channels") or None,
+                ),
             )
         except InboxError:
             return []
@@ -898,7 +989,11 @@ class BindingManager:
             if not safe.is_safe_id(item_id):
                 continue
             try:
-                detail = client.item(record["inboxId"], item_id)
+                detail = self._call_with_token_heal(
+                    record, lambda item_id=item_id: self._client(record).item(
+                        record["inboxId"], item_id
+                    )
+                )
             except InboxError:
                 continue
             if isinstance(detail, dict) and detail:

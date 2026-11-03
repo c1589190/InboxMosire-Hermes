@@ -48,6 +48,14 @@
 - 🟡 C5 daemon 未启动（连接被拒）→ `UNREACHABLE`，不崩溃、不无限重试
 - 🟡 C6 `unbind` 后 SSE 线程 5s 内退出（`threading.enumerate()` 无残留）
 - 🟡 C7 `on_session_end` / `on_session_reset` / `on_session_delete` 都会停 SSE 并清占用
+- ✅ C8 **token 轮换自愈（2026-11-03 真机事故）**：iiBot 每次启动都重签 `dsh-wake.token`，
+  旧 token 立刻失效。`client.py:reload_token()` 在 401 时重读文件，只有值真的变了才重放一次；
+  值没变则报错并提示「adapterTokenFile 指向当前运行实例的 data 目录」
+- ✅ C9 **描述文件优先**：`binding.py:descriptor_ref()` 读 token 文件同目录的
+  `binding-descriptor.json`，`inboxId` 匹配且文件可读时接管 `tokenRef`（记 `tokenRefSource=descriptor`）；
+  显式传 `adapterTokenRef` 时不覆盖；`inboxId` 不匹配时忽略
+- ✅ C10 `resume_all()` 复活绑定前先按描述文件校正 tokenRef；`_refresh_status` / `_summary_items` /
+  `_content_items` 遇 401 会接管描述文件并重试一次（`_call_with_token_heal`）
 - 🟡 C8 两个 session 绑同一 inbox → 互不影响（各自 cursor、各自水位、日志不串）
 - ✅ C9 `inbox_adapter_status` 不返回 token、不返回 item 正文、不返回其他 session 数据
 

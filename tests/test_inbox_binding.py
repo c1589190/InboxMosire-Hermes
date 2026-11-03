@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -112,6 +113,88 @@ class Base(unittest.TestCase):
 
     def wake(self, reason: str = "test") -> None:
         self.manager._maybe_wake(KEY, reason)
+
+
+class TokenRotationTests(Base):
+    """运行目录换了（bot -> bot2）时，同目录的 binding-descriptor.json 才是权威。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.old_token = self.dir / "dsh-wake.token"
+        self.new_token = self.dir / "wake-new.token"
+        for path in (self.old_token, self.new_token):
+            path.write_text(f"tok-{path.name}", encoding="utf-8")
+            os.chmod(path, 0o600)
+        self.descriptor = self.dir / binding_mod.DESCRIPTOR_FILE
+        self.config.adapter_token_file = f"file:{self.old_token}"
+
+    def _write_descriptor(self, *, inbox: str = "main", ref: str | None = None) -> None:
+        self.descriptor.write_text(
+            json.dumps(
+                {
+                    "inboxId": inbox,
+                    "apiBaseUrl": "http://127.0.0.1:18765",
+                    "adapterTokenRef": ref or f"file:{self.new_token}",
+                    "channels": ["qq"],
+                    "label": "dsh-bot",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _bind(self) -> dict:
+        self.manager.set_inject_capability("tui")
+        result = self.manager.bind(KEY, {"inboxId": "main", "source": "manual"})
+        self.assertTrue(result.get("ok"), result)
+        return self.store.get_binding(KEY) or {}
+
+    def test_bind_adopts_the_descriptor_beside_the_configured_token(self):
+        self._write_descriptor()
+        record = self._bind()
+        self.assertEqual(record["tokenRef"], f"file:{self.new_token}")
+        self.assertEqual(record.get("tokenRefSource"), "descriptor")
+
+    def test_descriptor_for_another_inbox_is_ignored(self):
+        self._write_descriptor(inbox="other-inbox")
+        record = self._bind()
+        self.assertEqual(record["tokenRef"], f"file:{self.old_token}")
+        self.assertIsNone(record.get("tokenRefSource"))
+
+    def test_explicit_adapter_token_ref_beats_the_descriptor(self):
+        self._write_descriptor()
+        self.manager.set_inject_capability("tui")
+        result = self.manager.bind(
+            KEY,
+            {
+                "inboxId": "main",
+                "source": "manual",
+                "adapterTokenRef": f"file:{self.old_token}",
+            },
+        )
+        self.assertTrue(result.get("ok"), result)
+        self.assertEqual(self.store.get_binding(KEY)["tokenRef"], f"file:{self.old_token}")
+
+    def test_status_401_adopts_the_descriptor_and_retries_once(self):
+        self._write_descriptor()
+        calls: list[int] = []
+
+        class Rotating(FakeClient):
+            def status(inner, inbox_id: str, *, channels=None) -> dict:
+                calls.append(1)
+                if len(calls) == 1:
+                    raise client_mod.InboxError("INBOX_AUTH", "token 已轮换", status=401)
+                return {"revision": 9, "available": 0}
+
+        rotating = Rotating()
+        self.manager._client = lambda record: rotating
+        record = self.seed(tokenRef=f"file:{self.old_token}")
+        self.wake()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(record["tokenRef"], f"file:{self.new_token}")
+        self.assertEqual(int(record["lastObservedRevision"]), 9)
 
 
 class PassiveBindingTests(Base):

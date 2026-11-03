@@ -5,6 +5,19 @@
 
 ## 未发布（HEAD）
 
+### inbox-wake 0.2.4：token 轮换自愈（2026-11-03）
+
+- 症状：把运行目录从 `bot/` 换到 `bot2/`（或重启 iiBot）后，唤醒全部静默失效，
+  `lastStatus.error` 是 `INBOX_AUTH: 401`；把 `adapterTokenFile` 改对了也要重启 gateway 才恢复。
+- 根因：iiBot 每次启动都无条件重签 `dsh-wake.token` / `program-mcp.token`（`BotInboxRuntime.java:125-146`），
+  而 `InboxClient` 把 token 缓存在内存里且 `drop_token_cache()` 没有任何调用点；`tokenRef` 又只认
+  `config.yaml` 那条绝对路径。
+- 修法：① `client.reload_token()`——401 时重读文件，值变了才重放一次，没变则点名 `adapterTokenFile`；
+  ② `binding.descriptor_ref()` / `_apply_descriptor()`——同目录 `binding-descriptor.json` 在 `inboxId`
+  匹配时接管 `tokenRef`（显式参数仍优先）；③ `_call_with_token_heal()` 包裹 status/items/item 三条读路径。
+- 测试：158 → 164（client 两条：轮换重放、未变化报错带提示；binding 四条：接管、跨 inbox 忽略、
+  显式优先、401 自愈重放）。
+
 ### scripts/check-vision.py：一条命令查「为什么读不了图」（2026-11-03）
 
 - 症状：Bot 说读不了图；换个 Agent 又自己写 `img_read.py` 直连多模态才看得到——说明是宿主层，

@@ -22,6 +22,81 @@ sse_mod = _loader.inbox_lib("sse")
 TOKEN = "test-token-value"
 
 
+class _RotatingHandler(BaseHTTPRequestHandler):
+    """第一次请求故意 401，并可在这时把 token 文件换成新值（模拟 iiBot 重签）。"""
+
+    server_version = "fake-inbox-rotating"
+    protocol_version = "HTTP/1.1"
+
+    expected = "old-token"
+    rotate: object = None
+    seen: list = []
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        type(self).seen.append(self.headers.get("Authorization"))
+        if self.headers.get("Authorization") != f"Bearer {type(self).expected}":
+            if type(self).rotate is not None:
+                type(self).rotate()
+            body = json.dumps({"code": "UNAUTHORIZED", "message": "token 已轮换"}).encode()
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = json.dumps({"revision": 3, "available": 0}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class TokenRotationTests(unittest.TestCase):
+    """iiBot 每次启动都重签 dsh-wake.token；运行中的进程必须自己跟上。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "dsh-wake.token"
+        self.path.write_text("old-token", encoding="utf-8")
+        os.chmod(self.path, 0o600)
+        _RotatingHandler.seen = []
+        _RotatingHandler.expected = "new-token"
+        _RotatingHandler.rotate = None
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _RotatingHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def _client(self):
+        ref = client_mod.TokenRef.parse(f"file:{self.path}")
+        return client_mod.InboxClient(self.base, ref, timeout_seconds=5)
+
+    def test_401_rereads_the_rotated_token_file_and_retries_once(self):
+        def rotate():
+            self.path.write_text("new-token", encoding="utf-8")
+
+        _RotatingHandler.rotate = rotate
+        payload = self._client().status("main")
+        self.assertEqual(payload["revision"], 3)
+        self.assertEqual(
+            _RotatingHandler.seen[:2], ["Bearer old-token", "Bearer new-token"]
+        )
+
+    def test_401_without_a_changed_file_raises_with_the_adapter_hint(self):
+        with self.assertRaises(client_mod.InboxError) as caught:
+            self._client().status("main")
+        self.assertEqual(caught.exception.status, 401)
+        self.assertIn("adapterTokenFile", str(caught.exception))
+        self.assertEqual(len(_RotatingHandler.seen), 1)
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "fake-inbox"
     protocol_version = "HTTP/1.1"

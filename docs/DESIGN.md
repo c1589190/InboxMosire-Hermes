@@ -247,3 +247,21 @@ Hermes **没有**等价的 turn 状态事件，本插件用以下组合近似：
 - SSE 断线：指数退避 `reconnectBaseMs` 1000 → `reconnectMaxMs` 60000，带 `Last-Event-ID`
   续传；心跳超时 `heartbeatTimeoutSeconds` 45s 视为断线。
 - 不做轮询：没有 SSE 时只在 `bind` / `retry` / `/inbox status` 时回源查询。
+
+## 3.7 运行时 token 的权威是「同目录的描述文件」，不是 config
+
+iiBot 启动时无条件重签两份凭据（`BotInboxRuntime.java:125-146`：`issueCredential` + `issueBinding`），
+把 `dsh-wake.token` / `program-mcp.token` 覆盖重写，同时把新的 `binding-descriptor.json` 落在同目录。
+服务端只认最新哈希，于是「换运行目录」或「重启 iiBot」之后，任何缓存的旧 token 都是 401。
+
+插件的三层兜底：
+
+1. `client.reload_token()`：401 时重读 token 文件；**只有值真的变了**才重放一次请求（避免把 401 重试成风暴）。
+   值没变则报错并直接点名 `adapterTokenFile`——这是配置错，不是轮换。
+2. `binding.descriptor_ref()` + `_apply_descriptor()`：token 文件同目录的 `binding-descriptor.json`
+   若 `inboxId` 匹配、`adapterTokenRef` 可读，就接管绑定里的 `tokenRef`（`tokenRefSource=descriptor`）。
+   显式 `adapterTokenRef` 仍然优先，描述文件描述的是别的 inbox 时忽略。
+3. `_call_with_token_heal()`：`status` / `items` / `item` 三条读路径在 401 时接管描述文件再试一次。
+
+代价与边界：多一次 stat/读小 JSON（只在 401、绑定、启动时发生）；轮换后第一次唤醒晚一个 RTT。
+不做的：不猜端口、不扫目录、不去解析 iiBot 的进程参数——路径来自配置 + 同目录描述文件这两个显式来源。

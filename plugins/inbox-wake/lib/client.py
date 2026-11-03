@@ -9,6 +9,7 @@ adapter that can claim is an adapter that can silently consume someone else's wo
 from __future__ import annotations
 
 import json
+import logging
 import os
 import stat
 import urllib.error
@@ -18,6 +19,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 from . import safe
+
+
+logger = logging.getLogger(__name__)
 
 TOKEN_FILE_MODE = 0o600
 
@@ -111,6 +115,20 @@ class InboxClient:
     def drop_token_cache(self) -> None:
         self._token = None
 
+    def reload_token(self) -> Optional[str]:
+        """Re-read the token file; returns the new value only when it actually changed."""
+        previous = self._token
+        self._token = None
+        try:
+            fresh = self._auth_token()
+        except InboxError:
+            self._token = previous
+            return None
+        if fresh == previous:
+            self._token = fresh
+            return None
+        return fresh
+
     def _headers(self, extra: Optional[Mapping[str, str]] = None) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {self._auth_token()}",
@@ -154,6 +172,19 @@ class InboxClient:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
             code, message = _error_from_body(exc)
+            if exc.code == 401:
+                # iiBot 每次启动都重新签发 dsh-wake.token 并覆盖同一个文件；缓存里的旧 token
+                # 会一路 401 到进程重启。重读文件，只有真的变了才重试（避免无意义的重放）。
+                fresh = self.reload_token()
+                if fresh is not None:
+                    logger.info("inbox-wake: adapter token rotated on disk; retrying once")
+                    return self._request(
+                        method, path, body=body, query=query, timeout=timeout
+                    )
+                message = (
+                    f"{message}（adapter token 已失效：确认 adapterTokenFile 指向**当前运行实例**的 "
+                    "data 目录；iiBot 每次启动都会重签 dsh-wake.token）"
+                )
             raise InboxError(code, message, status=exc.code) from None
         except urllib.error.URLError as exc:
             raise InboxError("TRANSPORT", f"无法连接 InboxMosire: {exc.reason}") from None
