@@ -38,11 +38,16 @@ cd InboxMosire-Hermes
 
 ```yaml
 plugins:
-  enabled: [persona-mode, inbox-wake]        # 插件默认不加载，必须点名
+  enabled: [persona-mode, inbox-wake, minimal-system]  # 插件默认不加载，必须点名；minimal-system 可选
   entries:
+    minimal-system:                           # 可选：把整段 system prompt 换成一句
+      settings:
+        enabled: true
+        systemPrompt: "You are a helpful software engineer assistant."
     persona-mode:
       settings:
         enabled: true
+        rolePlacement: injection              # 角色行随注入（配 minimal-system）；system = DSH 原版
         personaFile: /abs/path/to/PERSONA.md  # 不写则读会话工作目录下的 PERSONA.md
     inbox-wake:
       allow_gateway_injection: true           # 不写 true，inject_message 一律返回 False

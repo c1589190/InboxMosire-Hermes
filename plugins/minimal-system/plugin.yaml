@@ -1,0 +1,31 @@
+name: minimal-system
+version: "0.1.0"
+description: "Replace Hermes' assembled system prompt with one constant line, mirroring DSH's minimal preset (complete: true + includeRuntimeContext: false). Uses the public llm_request middleware, so nothing about the host prompt builder is patched."
+author: "c1589190"
+manifest_version: 2
+api_version: 1
+license: "MIT"
+homepage: "https://github.com/c1589190/InboxMosire-Hermes"
+tags: ["system-prompt", "minimal", "dsh-parity", "middleware"]
+provides_middleware:
+  - llm_request
+config_keys:
+  - plugins.entries.minimal-system.settings.enabled
+  - plugins.entries.minimal-system.settings.systemPrompt
+  - plugins.entries.minimal-system.settings.logRewrite
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    label: 启用极简系统提示词
+    description: 关闭后出站请求原样发送（宿主自己拼的那一大段）。
+  systemPrompt:
+    type: str
+    default: "You are a helpful software engineer assistant."
+    label: 系统提示词全文
+    description: 整段替换，不要写换行以外的格式；每轮发送的字节必须完全一致，否则前缀缓存失效。
+  logRewrite:
+    type: bool
+    default: false
+    label: 记录每次替换的字数变化
+    description: 排查用；只记长度和形状，不记内容，也不含任何凭据。

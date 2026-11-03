@@ -61,7 +61,8 @@ cp kit.env.example kit.env        # 改 jar 路径 / 数据目录 / 端口
 
 | 组件 | 作用 | 依赖宿主面 |
 |---|---|---|
-| `plugins/persona-mode` | 首轮注入 `PERSONA.md` 人设契约、压缩后重锚、缺文件时封禁外发 | `pre_llm_call` / `post_compaction` / `pre_tool_call` / system prompt section |
+| `plugins/persona-mode` | 首轮注入 `PERSONA.md` 人设契约（默认把两句角色行一起带上）、压缩后重锚、缺文件时封禁外发 | `pre_llm_call` / `post_compaction` / `pre_tool_call`（`rolePlacement=system` 时另用 system prompt section） |
+| `plugins/minimal-system` | 把出站请求的整段 system prompt 换成一句常量（默认 `You are a helpful software engineer assistant.`），配合人设注入做 DSH 式极简提示词 | `register_middleware("llm_request")` |
 | `plugins/inbox-wake` | 每 session 独立 binding、SSE 订阅 + 对账轮询、有界摘要唤醒、4 个工具 + `/inbox` 命令 | `inject_message` / `register_tool` / `register_command` / `post_tool_call` / `pre_llm_call` |
 | `kit/` | 一键发行包：`kit.sh`（doctor/up/status/down/probe/token）+ `kit.env.example` + `引导.md` | 只用宿主 CLI 与 InboxMosire jar |
 
@@ -183,10 +184,11 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 
 ```bash
 python3 -m compileall -q plugins
-python3 -m unittest discover -s tests        # 120 个用例
+python3 -m unittest discover -s tests        # 141 个用例
 hermes plugins validate plugins/inbox-wake --json
 hermes plugins doctor inbox-wake             # 4 tool(s), 7 hook(s)
 hermes plugins doctor persona-mode           # 0 tool(s), 2 hook(s)
+hermes plugins doctor minimal-system         # manifest/register 漂移（llm_request 中间件）
 ```
 
 - `lib/` 导入零副作用；所有线程都能被 disposer `join`。

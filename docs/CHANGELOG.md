@@ -14,6 +14,20 @@
 - `docs/RUNBOOK.md`：部署 / 启动 / 停止 / 升级回滚 / 验证清单 / 远程部署注意 / 排障表 + 宿主差异表。
 - `docs/CHANGELOG.md`（本文件）、`README.md` 重写。
 
+### persona 契约去重认出 api_content sidecar（2026-11-03）
+
+- **症状**：契约明明已经注入过，下一轮还是重新注入一份（长会话里 4K 契约每轮重复烧 token）。
+- **根因**：宿主把 `pre_llm_call` 的 context 只写进 **`api_content` sidecar**
+  （`agent/turn_context.py:124-136`、`:1007-1013`），而 durable `content` 仍是用户原话；
+  `persona.py:message_text()` 按 `content → api_content → …` 取**第一个非空**字段，
+  `has_contract()` 于是永远只看得到用户原话。
+- **修法**：新增 `message_texts(message) -> list[str]` 扫全部候选字段（dict 的
+  `content/api_content/text/message`、对象的 `content/api_content/text`），`history_texts()`
+  展开全部；`message_text()` 保留为首个非空（对外行为不变）。
+- **判定语义没变**：仍然是「对话表面上有没有当前 hash」，与「第几轮」无关 ——
+  所以人话、Inbox 唤醒、压缩后重锚走的是同一条路径，谁先来谁就带上契约。
+- **测试** 120 → 122：新增 B11 与 `message_texts` 字段展开两例。
+
 ### 冷启动自举 + 程序工具守卫（2026-11-03）
 
 - **背景**：用户要求「只起 Hermes，由 agent 按人设把 iiBot 拉起来」，日常是 TUI + 自动 gateway，
@@ -31,6 +45,35 @@
   顺带修复 `maxBindingsPerInbox` 从未被 `from_mapping()` 赋值（写 3 也一直是 1）。
 - **测试** 103 → 120：新增 `ProgramToolGuardTests` 7 例（缺工具拦截 / 工具就位补发 / 只缺 recommended /
   无 registry fail open / `programTools` 覆盖 / 开关关闭 / status 明细）。
+
+### 极简 system + 角色行随注入（2026-11-03）
+
+- **背景**：用户新想法（m00493）——「把 Hermes 的系统提示词改成 `You are a helpful software
+  engineer assistant.`，角色扮演提示带着 `PERSONA.md` 一起放进第一条注入消息」。DSH 用 preset 的
+  `complete: true` + `includeRuntimeContext: false` 做到这件事（`dsh-persona-mode/cordis.patch.yml:38-43`），
+  Hermes 的 system prompt 由 `agent/system_prompt.py:738` 分三层拼装且没有对应开关。
+- **新插件 `plugins/minimal-system`**：用公开的 `llm_request` 中间件在**出站请求最后一步**整段替换 system
+  （注册 `hermes_cli/plugins.py:939`、应用 `hermes_cli/middleware.py:88-99`、调用点
+  `agent/turn_api_request.py:156-166`）。三种线格式都覆盖：`messages[0].role=="system"`（chat_completions）、
+  顶层 `system`（anthropic_messages，str 与文本块列表，折叠时保留首个 `cache_control`）、
+  `instructions`（codex_responses）。只替换首个 system 消息，工具与消息体原样不动；不改原 dict；
+  没有 system 槽位/关掉开关/垃圾输入一律 `None`（原样发送）。输出是**字节稳定**的常量，
+  否则每轮前缀缓存都会失效。
+- **`persona-mode` 新增 `rolePlacement`**（默认 `injection`）：`injection` 时角色行不再进 system，
+  而是作为 `build_contract(..., role_line=…)` 的头部随契约一起走同一条 user 注入（`<system-reminder>` 之后、
+  `<persona-contract>` 之前）；`system` 恢复 DSH 原版布局（1 段 ≤200 字符的 system section、注入里不含角色行）。
+  非法取值告警并回退 `injection`。
+- **顺带修复**：`persona-mode/plugin.yaml` 的 `config_keys` 由裸 camelCase 改为点分路径
+  （`plugins.entries.persona-mode.settings.*`）—— 裸键会被宿主 skip（见 ACCEPTANCE Z.5）。
+- **文档**：`docs/ACCEPTANCE.md` 新增 B12/B13 与 `## O. 极简 system`（O1–O6 ✅、O7 🔒 未验证）；
+  `docs/DSH-PARITY.md` §5.3；`docs/DESIGN.md` §3.1/§3.5；`README.md` 组件表；`docs/INSTALL.md` 配置片段。
+- **风险（已登记）**：`agent/prompt_builder.py:362` 的 `TOOL_USE_ENFORCEMENT_MODELS` 含 `deepseek`，
+  宿主本来会注入「You MUST use your tools…」；整段替换会一并去掉，模型可能「只说不做」。
+  需要真机 A/B：`agent.tool_use_enforcement`（设 `off` 可让宿主自己也不注入）与
+  `plugins.entries.minimal-system.settings.enabled` 交叉验证。
+- **测试** 122 → 141：新增 `tests/test_minimal_system.py` 15 例（三形状 / 原 dict 不变 / 幂等 /
+  垃圾输入 / 注册）与 `tests/test_persona_mode.py` 5 例（默认不注册 section、`system` 模式注册、
+  角色行位置、非法值回退）。
 
 ### 归属（ownership）：只让一个会话收事件
 

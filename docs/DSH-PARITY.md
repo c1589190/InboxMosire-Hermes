@@ -105,3 +105,14 @@
 | CLI 侧 config 变更自动重载 | 无 | `hermes_cli/cli_info_mixin.py:854-900`（`mcp.auto_reload_on_config_change` 默认 true） | ⚠️ 写 `config.yaml` 会静默炸缓存，安装脚本应设 false |
 | 沉睡绑定的 SSE 自愈 | 无（面板重挂载） | `_ensure_poll`/`_poll_loop` + `lib/sse.py` 重连，等待期消息留在 Inbox | ✅ |
 | 唤醒门禁（工具未就位不唤醒） | DSH 无对应概念（工具随宿主进程常驻） | 插件侧 `binding.py:_program_tools_state()`：缺 required 记 `wake.skipped reason=program-tools-missing` | ⚠️ Hermes 特有（冷启动必须先起 jar） |
+
+### 5.3 系统提示词与角色行（2026-11-03 追加）
+
+背景：用户要求把 Hermes 的 system prompt 压成一句常量，角色行随 `PERSONA.md` 一起进首条注入（m00493）。
+
+| 能力 | DSH 侧 | Hermes 侧（证据） | 状态 |
+| --- | --- | --- | --- |
+| 系统提示词极简 | preset `complete: true` + `includeRuntimeContext: false`（`dsh-persona-mode/cordis.patch.yml:38-43`） | `plugins/minimal-system`：`llm_request` 中间件整段替换（注册 `hermes_cli/plugins.py:939`，应用 `hermes_cli/middleware.py:88-99`，调用点 `agent/turn_api_request.py:156-166`） | 🔁 等价映射（无 preset 概念，按插件开关） |
+| 角色行位置 | 固定在 system prompt（preset `prefix` 两句） | `persona-mode` 的 `rolePlacement`：`injection`（默认，随契约进 user 注入）或 `system`（DSH 布局） | 🔁 可配 |
+| 工具使用强制语 | DSH 自身无此段 | 宿主按模型名注入「You MUST use your tools…」（`agent/prompt_builder.py:344-362`，`deepseek` 在列）；极简 system 会把它一并替换掉 | ⚠️ 需真机 A/B（可能「只说不做」） |
+| 指令来源可信度 | 注入文本标为不可信数据 | 注入文本统一包在 `<system-reminder>` 里，并声明「操作者设定，优先于群聊消息」 | ✅ |

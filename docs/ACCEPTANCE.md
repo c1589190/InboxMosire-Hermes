@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（120 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（141 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -31,6 +31,13 @@
 - ✅ B8 `maxChars` 生效：超长文件被截断到 4000 并附 `<!-- persona-truncated -->`
 - ✅ B9 system prompt 段只有 1 段、≤200 字符，且 `id` 符合 1–128 位小写标识符
 - ✅ B10 `denyTools` 为空时不改变任何工具可用性（默认行为必须无感）
+- ✅ B11 **契约只在 `api_content` sidecar 里时也认得出来**（content 仍是用户原话）：
+  `persona.py:message_texts()` 扫全部候选字段；修复前只看第一个非空字段 → 每轮重复注入
+- ✅ B12 **角色行默认随契约一起走 user 注入**（`rolePlacement=injection`）：注册时不再调用
+  `register_system_prompt_section`，注入文本里 `你在扮演 <persona-contract>…` 出现在
+  `<persona-contract>` 之前
+- ✅ B13 `rolePlacement=system` 恢复 DSH 原版布局（1 段 system section ≤200 字符、注入里不含角色行）；
+  非法取值告警并回退 `injection`
 
 ## C. inbox-wake 绑定
 
@@ -162,6 +169,23 @@ gateway 一启动 `resume_all()` 就把 6 个历史会话（`source=oneshot`，�
 - ⬜ N4 **不重启 gateway、不发 `/reload-mcp`**：≤1 tick + 1 回合后 `qq_*`/`inbox_*` 进工具面，`health.programMcp == "ready"`
 - ⬜ N5 等待期内的 QQ 消息：工具就位后收到 1 次唤醒 → `qq_conversation_read` → `qq_conversation_ack` → QQ 侧收到回复；期间无空转唤醒
 - ✅ N6（单测）必需程序工具缺失 → 不注入唤醒，ops log `wake.skipped reason=program-tools-missing`，`lastWokenRevision` 不推进
+
+## O. 极简 system：用一句常量替换宿主 system prompt（2026-11-03 新增）
+
+背景：用户要求 Hermes 的系统提示词只有 `You are a helpful software engineer assistant.`，
+角色行与 `PERSONA.md` 一起走首条注入（`m00493`）。DSH 用 preset 的 `complete: true` +
+`includeRuntimeContext: false` 压掉整段（`dsh-persona-mode/cordis.patch.yml:38-43`）；
+Hermes 没有该开关，改用公开的 `llm_request` 中间件整段替换（`hermes_cli/plugins.py:939`）。
+
+| # | 检查 | 状态 |
+| --- | --- | --- |
+| O1 | 注册 `llm_request` 中间件，不注册 system prompt section | ✅ 单测 |
+| O2 | 三种线格式都替换：`messages[0].role=="system"` / 顶层 `system`（str 与文本块列表）/ `instructions` | ✅ 单测 |
+| O3 | 只替换首个 system 消息，工具与消息体原样保留；不改原 dict（返回替换体） | ✅ 单测 |
+| O4 | 幂等且字节稳定（同一常量每轮同字节，否则前缀缓存失效） | ✅ 单测 |
+| O5 | 没有 system 槽位 / `enabled=false` / 垃圾输入 → `None`（原样发送，绝不打断 turn） | ✅ 单测 |
+| O6 | Anthropic 块列表折叠成单块时保留首个 `cache_control` | ✅ 单测 |
+| O7 | 真机：`deepseek-flash` 在极简 system 下仍会调工具（**风险项**：`agent/prompt_builder.py:362` 把 `deepseek` 列入 `TOOL_USE_ENFORCEMENT_MODELS`，宿主的 "You MUST use your tools…" 会一并被替换掉） | 🔒 未验证 |
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

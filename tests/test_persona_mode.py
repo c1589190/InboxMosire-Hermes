@@ -62,6 +62,36 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(persona.has_missing_notice([Msg(persona.build_missing("/x"))]))
         self.assertFalse(persona.has_missing_notice([]))
 
+    def test_contract_is_found_in_the_api_content_sidecar(self) -> None:
+        """宿主把 pre_llm_call 的 context 只写进 api_content，content 仍是用户原话。
+
+        只看第一个非空字段的实现会认不出契约 → 每轮重复注入。
+        """
+        digest = persona.contract_hash(BODY)
+        contract = persona.build_contract(BODY, 4000)
+        history = [
+            {"role": "user", "content": "今天天气怎么样", "api_content": "今天天气怎么样\n\n" + contract},
+        ]
+        self.assertTrue(persona.has_contract(history, digest))
+        self.assertFalse(persona.has_missing_notice(history))
+
+        class Msg:
+            def __init__(self, content: str, api_content: str) -> None:
+                self.content = content
+                self.api_content = api_content
+
+        self.assertTrue(persona.has_contract([Msg("在吗", contract)], digest))
+        self.assertTrue(persona.has_missing_notice([Msg("在吗", persona.build_missing("/x"))]))
+        # 两个字段都要扫：content 里是旧 hash、api_content 里是新 hash
+        self.assertFalse(persona.has_contract(history, persona.contract_hash(BODY + "v2")))
+
+    def test_message_texts_returns_every_field_once(self) -> None:
+        msg = {"content": "hi", "api_content": "hi", "text": "extra"}
+        self.assertEqual(persona.message_texts(msg), ["hi", "extra"])
+        self.assertEqual(persona.message_text(msg), "hi")
+        self.assertEqual(persona.message_texts(None), [])
+        self.assertEqual(persona.message_texts({"content": ""}), [])
+
     def test_reader_caches_by_mtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "PERSONA.md"
@@ -104,16 +134,48 @@ class RegisterTests(unittest.TestCase):
         plugin.register(ctx)
         return ctx
 
-    def test_register_wires_section_hooks(self) -> None:
+    def test_register_keeps_the_system_prompt_clean_by_default(self) -> None:
+        """默认 rolePlacement=injection：不再往 system 里塞角色行（留给极简 system）。"""
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
+            self.assertEqual(ctx.sections, [])
+            self.assertIn("pre_llm_call", ctx.hooks)
+            self.assertIn("pre_tool_call", ctx.hooks)
+
+    def test_role_placement_system_wires_the_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[], rolePlacement="system")
             self.assertEqual(len(ctx.sections), 1)
             section_id, content, kwargs = ctx.sections[0]
             self.assertEqual(section_id, plugin.ROLE_SECTION_ID)
-            self.assertIn("<persona-contract>", content)
+            self.assertEqual(content, plugin.ROLE_TEXT)
             self.assertEqual(kwargs["position"], "after_memory")
-            self.assertIn("pre_llm_call", ctx.hooks)
-            self.assertIn("pre_tool_call", ctx.hooks)
+
+    def test_role_line_rides_with_the_injected_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "PERSONA.md").write_text(BODY, encoding="utf-8")
+            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
+            text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
+            self.assertIn("你在扮演 <persona-contract> 定义的角色", text)
+            self.assertIn("自称本鲸", text)
+            # 角色行在契约之前、同一条注入消息里
+            self.assertLess(text.index("你在扮演"), text.index("<persona-contract>"))
+
+    def test_role_placement_system_leaves_it_out_of_the_injection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "PERSONA.md").write_text(BODY, encoding="utf-8")
+            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[], rolePlacement="system")
+            text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
+            self.assertNotIn("你在扮演", text)
+            self.assertIn("自称本鲸", text)
+
+    def test_bad_role_placement_falls_back_to_injection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[], rolePlacement="nonsense")
+            self.assertEqual(ctx.sections, [])
+            (Path(tmp) / "PERSONA.md").write_text(BODY, encoding="utf-8")
+            text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
+            self.assertIn("你在扮演", text)
 
     def test_injects_contract_once_then_stays_quiet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -58,6 +58,7 @@ class FakeCtx:
         self.tools: dict[str, dict] = {}
         self.commands: dict[str, Any] = {}
         self.hooks: dict[str, list] = {}
+        self.middleware: dict[str, list] = {}
         self.sections: list[tuple[str, Any, dict]] = []
         self.injected: list[tuple[str, str]] = []
         self.unload: Any = None
@@ -74,6 +75,9 @@ class FakeCtx:
 
     def register_hook(self, name: str, callback) -> None:
         self.hooks.setdefault(name, []).append(callback)
+
+    def register_middleware(self, kind: str, callback) -> None:
+        self.middleware.setdefault(kind, []).append(callback)
 
     def register_system_prompt_section(self, section_id: str, content: Any, **kwargs: Any) -> None:
         self.sections.append((section_id, content, kwargs))

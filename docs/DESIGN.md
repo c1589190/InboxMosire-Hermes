@@ -4,8 +4,9 @@
 
 ```
 Hermes 进程
-├── persona-mode 插件        ── 读 PERSONA.md ──▶ system prompt section（固定 2 句角色位）
-│                                             └▶ pre_llm_call 注入人设契约（按 hash 去重/重锚）
+├── minimal-system 插件     ── llm_request ──▶ 把整段 system prompt 换成一句常量（可选）
+├── persona-mode 插件        ── 读 PERSONA.md ──▶ pre_llm_call 注入人设契约 + 角色行（按 hash 去重/重锚）
+│                                             └▶ rolePlacement=system 时改用 system prompt section（DSH 原版）
 └── inbox-wake 插件
     ├── BindingManager       每个 session_key 一条 binding（状态机 + 去重水位）
     ├── SseWorker            每 binding 一个线程：GET /events（带 Last-Event-ID）
@@ -22,6 +23,8 @@ InboxMosire MCP    (127.0.0.1:18766/mcp)    ← 业务工具，由 config.yaml �
 - 生效范围不同：人设对所有 session 生效；inbox binding 是 per-session 的。
 - 失败面不同：SSE 线程崩溃不该连带人设失效；人设文件缺失不该拖垮唤醒。
 - 配置命名空间不同（`plugins.entries.persona-mode.settings.*` vs `…inbox-wake.settings.*`）。
+- `minimal-system` 又是第三件事：它改的是**所有**出站请求的 system prompt（与「有没有人设」无关），
+  所以独立成插件；关掉它，人设仍然工作（`rolePlacement=system` 退回 DSH 布局）。
 
 ## 3. persona-mode
 
@@ -33,7 +36,7 @@ DSH 原版把**系统提示词压到 2 句**（`dsh-persona-mode/README.md`：`c
 
 | 层 | DSH | Hermes | 说明 |
 |---|---|---|---|
-| 角色位 | preset 的 `complete` system prompt = `你在扮演 <persona-contract> 定义的角色。在调用工具进行聊天发言时，请遵循 <persona-contract> 中的相关规则。` | `ctx.register_system_prompt_section("persona-mode-role", <同一句话>, position="after_memory", max_chars=200)` | 常量，天然 cache 友好；每个新 session 渲染一次 |
+| 角色位 | preset 的 `complete` system prompt = `你在扮演 <persona-contract> 定义的角色。在调用工具进行聊天发言时，请遵循 <persona-contract> 中的相关规则。` | `rolePlacement=injection`（默认）：这两句作为 `build_contract(..., role_line=…)` 的头部随正文一起注入；`rolePlacement=system`：`ctx.register_system_prompt_section("persona-mode-role", <同一句话>, position="after_memory", max_chars=200)` | 默认模式下 system prompt 交给 `minimal-system` 压成一句，角色行与契约同生共死（压缩掉一起重注） |
 | 正文 | 首条 user message `<system-reminder>…<persona-contract>…</persona-contract>` | `pre_llm_call` 返回 `{"context": <同一段文本>}`（追加到本轮 user message） | 每个 session 首轮注入；history 里已有同 hash 块则跳过 |
 | 重锚 | 压缩把契约挤出 surface 后，`agent/pre-step` 再注入 | `pre_llm_call` 扫 `conversation_history`，找不到同 hash 的块就重注入 | 不需要额外 hook；`post_compaction` 只用于记 ops log |
 
@@ -81,6 +84,21 @@ DSH 原版把**系统提示词压到 2 句**（`dsh-persona-mode/README.md`：`c
 - 上限：`max_chars` 默认 4000（`bot/PERSONA.md` 当前 2883 字符），超出截断并加
   `<!-- persona-truncated -->` 标记。
 - 读取失败（权限/编码）按「缺失」处理，不抛进 hook 链路。
+
+### 3.5 极简提示词（与 `minimal-system` 的分工）
+
+Hermes 的 system prompt 由 `agent/system_prompt.py:738` 分三层拼装（身份/SOUL、工具指引、环境探针、
+时间戳、skills 索引、memory、插件段……），且宿主会按模型名追加「You MUST use your tools…」
+（`agent/prompt_builder.py:344-362`，`deepseek` 在列）。两种收敛手段：
+
+| 手段 | 落点 | 代价 |
+| --- | --- | --- |
+| 配置瘦身 | `config.yaml` 的 `agent.*` 开关（`stall_guards` / `task_completion_guidance` / `parallel_tool_call_guidance` / `environment_probe` / `bot_mode_protocol` / `tool_use_enforcement` / `execution_guidance`，见 `agent/agent_init.py:1284-1310`）、`skip_context_files`、`skip_memory` | 逐段关，宿主升级加的新段还会回来 |
+| 整段替换 | `plugins/minimal-system` 的 `llm_request` 中间件（出站最后一步，`agent/turn_api_request.py:156-166`） | 一劳永逸，但工具指引也没了 → 可能「只说不做」 |
+
+默认两者都用不上：`minimal-system` 需要操作者在 `plugins.enabled` 里点名。角色行由
+`rolePlacement` 决定放 system 还是随注入走，因此「极简 system + 完整人设」与「完整 system + 人设」
+可以只靠配置切换，不需要改代码。
 
 ## 4. inbox-wake
 

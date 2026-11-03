@@ -2,9 +2,11 @@
 
 Two paths, mirroring ``@mosire/dsh-persona-mode``:
 
-* a constant role line in the system prompt (``register_system_prompt_section``) — cheap, cache-friendly;
 * the contract body as a per-turn user-message injection via ``pre_llm_call`` — re-anchored whenever
-  the conversation no longer carries the current body (compaction, file edit).
+  the conversation no longer carries the current body (compaction, file edit);
+* the two-sentence role line, placed by ``rolePlacement``: ``injection`` (default — rides inside the
+  same injected message, so the host system prompt can be reduced to one line by ``minimal-system``)
+  or ``system`` (the DSH layout — a system prompt section via ``register_system_prompt_section``).
 
 While ``PERSONA.md`` is missing, outbound chat tools are blocked by ``pre_tool_call`` (fail closed).
 """
@@ -26,6 +28,11 @@ ROLE_TEXT = (
     "在调用工具进行聊天发言时，请遵循 <persona-contract> 中的相关规则。"
 )
 
+#: 角色行放哪：``system``（DSH 原版，系统提示词里两句）或 ``injection``
+#: （系统提示词交给 minimal-system 之类压成一句，角色行随契约走首条注入）。
+DEFAULT_ROLE_PLACEMENT = "injection"
+ROLE_PLACEMENTS = ("injection", "system")
+
 DEFAULT_PERSONA_FILE = "PERSONA.md"
 DEFAULT_MAX_CHARS = 4000
 DEFAULT_OUTBOUND_TOOLS = ("qq_conversation_send", "conversation_send")
@@ -33,6 +40,7 @@ DEFAULT_OUTBOUND_TOOLS = ("qq_conversation_send", "conversation_send")
 _config: dict[str, Any] = {
     "enabled": True,
     "personaFile": DEFAULT_PERSONA_FILE,
+    "rolePlacement": DEFAULT_ROLE_PLACEMENT,
     "maxChars": DEFAULT_MAX_CHARS,
     "outboundGuard": True,
     "outboundTools": list(DEFAULT_OUTBOUND_TOOLS),
@@ -81,6 +89,11 @@ def _load_config(ctx: Any) -> None:
     try:
         _config["enabled"] = bool(get("enabled", True))
         _config["personaFile"] = str(get("personaFile", DEFAULT_PERSONA_FILE) or DEFAULT_PERSONA_FILE)
+        placement = str(get("rolePlacement", DEFAULT_ROLE_PLACEMENT) or DEFAULT_ROLE_PLACEMENT).strip().lower()
+        if placement not in ROLE_PLACEMENTS:
+            logger.warning("persona-mode: unknown rolePlacement %r, using %s", placement, DEFAULT_ROLE_PLACEMENT)
+            placement = DEFAULT_ROLE_PLACEMENT
+        _config["rolePlacement"] = placement
         try:
             _config["maxChars"] = max(0, int(get("maxChars", DEFAULT_MAX_CHARS)))
         except (TypeError, ValueError):
@@ -109,7 +122,12 @@ def _on_pre_llm_call(**kwargs: Any) -> Optional[dict[str, Any]]:
         if persona_lib.has_contract(history, digest):
             return None
         logger.debug("persona-mode: injecting contract hash=%s from %s", digest, path)
-        return {"context": persona_lib.build_contract(body, int(_config["maxChars"]))}
+        role_line = ROLE_TEXT if _config.get("rolePlacement") == "injection" else ""
+        return {
+            "context": persona_lib.build_contract(
+                body, int(_config["maxChars"]), role_line=role_line
+            )
+        }
     except Exception as exc:  # pre_llm_call must never break the turn
         logger.warning("persona-mode: pre_llm_call failed: %s", exc)
         return None
@@ -138,15 +156,16 @@ def _on_pre_tool_call(tool_name: str = "", **_: Any) -> Optional[dict[str, Any]]
 
 def register(ctx: Any) -> None:
     _load_config(ctx)
-    try:
-        ctx.register_system_prompt_section(
-            ROLE_SECTION_ID, ROLE_TEXT, position="after_memory", max_chars=200
-        )
-    except Exception as exc:
-        logger.warning("persona-mode: system prompt section unavailable: %s", exc)
+    if _config.get("rolePlacement") == "system":
+        try:
+            ctx.register_system_prompt_section(
+                ROLE_SECTION_ID, ROLE_TEXT, position="after_memory", max_chars=200
+            )
+        except Exception as exc:
+            logger.warning("persona-mode: system prompt section unavailable: %s", exc)
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     logger.info(
-        "persona-mode: loaded (personaFile=%s, maxChars=%s, outboundGuard=%s)",
-        _config["personaFile"], _config["maxChars"], _config["outboundGuard"],
+        "persona-mode: loaded (personaFile=%s, rolePlacement=%s, maxChars=%s, outboundGuard=%s)",
+        _config["personaFile"], _config["rolePlacement"], _config["maxChars"], _config["outboundGuard"],
     )
