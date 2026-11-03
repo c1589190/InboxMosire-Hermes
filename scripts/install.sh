@@ -49,18 +49,18 @@ do_plugins() {
   if [ -n "$LOCAL_SRC" ]; then
     [ -d "$LOCAL_SRC/plugins/persona-mode" ] || die "本地路径里没有 plugins/persona-mode: $LOCAL_SRC"
     mkdir -p "$HERMES_HOME_DIR/plugins"
-    for id in persona-mode inbox-wake; do
+    for id in persona-mode inbox-wake minimal-system; do
       log "复制 $id → $HERMES_HOME_DIR/plugins/$id"
       rm -rf "$HERMES_HOME_DIR/plugins/$id"
       cp -a "$LOCAL_SRC/plugins/$id" "$HERMES_HOME_DIR/plugins/$id"
       find "$HERMES_HOME_DIR/plugins/$id" -name '__pycache__' -type d -prune -exec rm -rf {} +
     done
-    for id in persona-mode inbox-wake; do
+    for id in persona-mode inbox-wake minimal-system; do
       log "启用 $id"
       "$HERMES_BIN" plugins enable "$id" || warn "启用 $id 失败，稍后手动执行: $HERMES_BIN plugins enable $id"
     done
   else
-    for id in persona-mode inbox-wake; do
+    for id in persona-mode inbox-wake minimal-system; do
       log "从 $REPO_SLUG#plugins/$id 安装并启用"
       "$HERMES_BIN" plugins install "$REPO_SLUG#plugins/$id" --enable \
         || die "安装 $id 失败。若被安装期安全扫描拦下，先看提示；确认无误后可加 --force 重试"
@@ -119,6 +119,10 @@ do_settings() {
   set_cfg "plugins.entries.inbox-wake.settings.adapterTokenFile" "file:$TOKEN_PATH"
   set_cfg "plugins.entries.inbox-wake.settings.wakeMode" "$WAKE_MODE"
   set_cfg "plugins.entries.inbox-wake.settings.wakeProfile" "$WAKE_PROFILE"
+  log "写入 minimal-system 设置（一句式 system prompt）"
+  set_cfg "plugins.entries.minimal-system.settings.enabled" "true"
+  set_cfg "plugins.entries.minimal-system.settings.systemPrompt" \
+    "You are a helpful software engineer assistant."
   # 关键开关：没有它，gateway 会话里的唤醒会被宿主拒绝（inject_message 返回 False）
   set_cfg "plugins.entries.inbox-wake.allow_gateway_injection" "true"
   ok "设置写入完成"
@@ -129,7 +133,7 @@ do_check() {
   need_hermes
   log "插件清单"; "$HERMES_BIN" plugins list --user --plain || true
   log "运行时契约校验（doctor）"
-  for id in persona-mode inbox-wake; do
+  for id in persona-mode inbox-wake minimal-system; do
     "$HERMES_BIN" plugins doctor "$id" --ci || warn "$id doctor 报了问题，见上面的输出"
   done
   log "InboxMosire 连通性"
