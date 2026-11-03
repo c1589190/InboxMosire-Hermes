@@ -269,6 +269,7 @@ hermes plugins enable inbox-wake persona-mode minimal-system
 | `programMcp: missing` | `hermes mcp test inbox` | 挂 `mcp_servers.inbox`（见 §2.3） |
 | 一个事件叫醒好几个会话 / 机器上突然跑了多个 agent | `python3 -c` 读 `state.json` 看 `bindings` 条数与 `createdAt` | 僵尸绑定：每次一次性/CLI 会话 autoBind 都会留一条。设 `maxBindingsPerInbox`（默认 1）后重启 gateway 即自动裁剪；手工清：停 gateway 后把 `bindings` 置 `{}`（先备份），下次会话 autoBind 只建一条 |
 | `/inbox log` 里 `wake.deferred reason=no-live-session` | `gateway.log` 的 `is not a live local session of the plugin's profile home …` | 目标 local 会话此刻不活跃（经典 REPL 只在 turn 运行中才是 live session）。插件按 `wakeRetrySeconds` 固定重试，不烧退避；要**空闲时**被唤醒，见 §7.2 |
+| Agent 自己写脚本直连多模态才能看图（`vision_analyze` 也拿不到像素） | `./scripts/check-vision.py` | 同一个根因：宿主没声明视觉能力，原生附图链路整条是关的。补 `hermes config set model.supports_vision true` 并重启 gateway，别再让 Agent 维护 `img_read.py` 这类绕过脚本 |
 | Bot 说「我读不了图」/ 调了 `qq_media_get` 却只看到 `MEDIA:/…` 路径 | `hermes config get model.supports_vision` | 宿主目录查不到 `custom:newapi` + `deepseek-flash` 的视觉能力 → 路由判定为 `text`，MCP `ImageContent` 只留 `MEDIA:` 路径。设 `model.supports_vision: true` 后重启 gateway（实测该 route 能读 `role=tool` 里的图文块列表）|
 | 每轮刷 `config_keys entry 'x' must be a dotted path at least two levels deep; skipping` | — | 已知 manifest 缺陷（裸驼峰键），不影响 settings 生效 |
 | 会话卡住/一直转圈 | `~/.hermes/logs/gateway.log` 里 `APIConnectionError` / 长耗时工具 | 见 §7.1 |

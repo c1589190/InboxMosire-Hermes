@@ -5,6 +5,16 @@
 
 ## 未发布（HEAD）
 
+### scripts/check-vision.py：一条命令查「为什么读不了图」（2026-11-03）
+
+- 症状：Bot 说读不了图；换个 Agent 又自己写 `img_read.py` 直连多模态才看得到——说明是宿主层，
+  不是模型层。
+- 排查脚本：读 `~/.hermes/config.yaml` 判 `model.supports_vision`（宿主层），再用一张 64×64 纯红探针图
+  直连 `providers.<name>.api` 的 `/chat/completions`（中转/模型层），两层分别给 ✅/❌ 与修法。
+  退出码 0=两侧都过 / 1=宿主未声明 / 2=route 拒图。
+- 文档：ONBOARD 验证步骤加一行；新增「版本线」小节（插件 `v0.2.x` ≠ iiBot `Alpha<日期>` jar）；
+  RUNBOOK §7 加「Agent 自己写脚本直连多模态才能看图」一行。
+
 ### 唤醒文本瘦身：view-ack 去掉全部提示性散文（2026-11-03 真机反馈）
 
 - 症状：一条只有 1 条消息的唤醒里，「这是通知板唤醒信号…source 只是定位参数…不要轮询」+

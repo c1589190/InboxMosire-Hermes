@@ -77,6 +77,8 @@
 >    程序侧 token 才需要 `items:read,items:manage`，和上面的 wake token 分开、不要复用。
 > 4. 重启让插件与设置生效：`hermes gateway restart`（或 `hermes gateway stop` + `nohup hermes gateway run &`）。
 > 5. 验证：
+>    - `./scripts/check-vision.py` 两个 ✅（宿主声明 + 模型真的读到探针图）；显示「未声明」就补
+>      `hermes config set model.supports_vision true` 再重启 gateway
 >    - `hermes plugins doctor persona-mode` / `inbox-wake` / `minimal-system` 三项都过
 >    - 会话里 `/inbox status` 显示 `sse: open|connecting` 且 `observed` 在涨
 >    - `grep -a "inbox-wake: loaded" ~/.hermes/logs/agent.log | tail -1` 有输出
@@ -84,6 +86,18 @@
 >
 > 已经装过旧版要升级：`./scripts/sync-plugins.sh --dry-run`（看「已装版本 → 源版本」）→ `./scripts/sync-plugins.sh --restart`。
 > 排查见 `docs/RUNBOOK.md` §7；冷启动（先起 Hermes 后起 jar）见 `docs/COLDSTART.md`。
+
+---
+
+## 版本线（两条，互不代表）
+
+| 东西 | 版本长什么样 | 从哪来 |
+|---|---|---|
+| Hermes 插件（`persona-mode` / `inbox-wake` / `minimal-system`） | `v0.2.4`、插件 `0.2.3` 这类 `0.x.y` | `InboxMosire-Hermes` 的 tag / Release（**只有源码包**） |
+| iiBot 本体 | `Alpha20261103`（jar: `iibot-app-Alpha20261103.jar`） | `iiBotMosire` 的 tag / Release（**带 jar + SHA256SUMS**） |
+
+「插件升到 0.2.3 了，是不是要下 0.2.3 的 jar？」——**不存在 0.2.3 的 jar**：插件版本变了不需要换 jar，
+除非 iiBot 侧也发了新的 `Alpha<日期>`。反向同理。
 
 ---
 
