@@ -319,6 +319,45 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("摘要（最多 20 条", text)
         self.assertLess(text.index("inbox_claim"), text.index("摘要"))
 
+    def test_item_already_rendered_in_the_body_is_not_repeated_in_the_summary(self) -> None:
+        """同一条消息不能在摘要行和正文段里各出现一次（名字出现两次的真机反馈）。"""
+        body = json.dumps(
+            {"messages": [{"localSeq": 1, "senderName": "小明", "summary": "小明：在吗"}]},
+            ensure_ascii=False,
+        )
+        text = template.build_wake(
+            inbox_id="main",
+            revision=2,
+            available=1,
+            channels=["grp"],
+            summary_items=[{"itemId": "i1", "channel": "grp", "kind": "digest", "title": "小明：在吗"}],
+            content_items=[{"itemId": "i1", "channel": "grp", "kind": "digest", "content": body}],
+            content_enabled=True,
+        )
+        self.assertEqual(text.count("小明"), 1)          # 正文里一次，摘要里不再重复
+        self.assertNotIn("摘要（最多", text)             # 摘要块整块消失，而不是留个空壳
+
+    def test_summary_still_lists_items_without_body(self) -> None:
+        body = json.dumps(
+            {"messages": [{"localSeq": 1, "senderName": "小明", "summary": "小明：在吗"}]},
+            ensure_ascii=False,
+        )
+        text = template.build_wake(
+            inbox_id="main",
+            revision=2,
+            available=2,
+            channels=["grp"],
+            summary_items=[
+                {"itemId": "i1", "channel": "grp", "kind": "digest", "title": "小明：在吗"},
+                {"itemId": "i2", "channel": "grp", "kind": "digest", "title": "小红：在的"},
+            ],
+            content_items=[{"itemId": "i1", "channel": "grp", "kind": "digest", "content": body}],
+            content_enabled=True,
+        )
+        self.assertIn("摘要（最多", text)
+        self.assertIn("i2", text)      # 没有正文的条目仍然靠摘要行给 itemId
+        self.assertNotIn('"itemId":"i1"', text)
+
 
 if __name__ == "__main__":
     unittest.main()

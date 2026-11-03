@@ -74,9 +74,15 @@ def summary_block(
     max_total_chars: int,
     max_title_chars: int,
     remaining: int = 0,
+    skip_item_ids: Iterable[str] = (),
 ) -> str:
-    """Bounded summary: at most ``max_items`` one-line JSON records inside a character budget."""
-    records = list(items)
+    """Bounded summary: at most ``max_items`` one-line JSON records inside a character budget.
+
+    ``skip_item_ids``：正文段已经整条渲染过的条目不再出现在摘要里——摘要行的 ``title`` 就是
+    iiBot 的行内摘要（``发送者：正文``），正文段再渲染一遍等于同一条消息出现两次。
+    """
+    skip = {str(item_id) for item_id in skip_item_ids}
+    records = [item for item in items if str(item.get("itemId") or item.get("id") or "") not in skip]
     lines: list[str] = [SUMMARY_INTRO.format(max_items=max_items)]
     used = len(lines[0])
     shown = 0
@@ -103,6 +109,7 @@ def content_block(
     *,
     per_item_chars: int,
     total_chars: int,
+    rendered: Optional[set[str]] = None,
 ) -> str:
     """Opt-in body preview (``wakeContent=bounded|full``); still bounded and clearly marked."""
     records = list(entries)
@@ -127,6 +134,8 @@ def content_block(
         lines.append(block)
         used += len(block) + 1
         shown += 1
+        if rendered is not None:
+            rendered.add(str(view.get("itemId") or ""))
         if view.get("truncated"):
             truncated = True
     if truncated:
@@ -156,6 +165,15 @@ def build_wake(
     content_enabled: bool = False,
 ) -> str:
     """Compose the wake message: header, instructions, optional summary, optional body."""
+    rendered: set[str] = set()
+    body = ""
+    if content_enabled and content_items:
+        body = content_block(
+            content_items,
+            per_item_chars=content_max_chars,
+            total_chars=content_total_chars,
+            rendered=rendered,
+        )
     summary = ""
     if summary_items:
         summary = summary_block(
@@ -164,6 +182,7 @@ def build_wake(
             max_total_chars=summary_max_total_chars,
             max_title_chars=summary_max_title_chars,
             remaining=summary_remaining,
+            skip_item_ids=rendered,
         )
     parts = [
         header(inbox_id=inbox_id, revision=revision, available=available, channels=channels),
@@ -171,14 +190,8 @@ def build_wake(
     ]
     if summary:
         parts.append(summary)
-    if content_enabled and content_items:
-        body = content_block(
-            content_items,
-            per_item_chars=content_max_chars,
-            total_chars=content_total_chars,
-        )
-        if body:
-            parts.append(body)
+    if body:
+        parts.append(body)
     return "\n\n".join(parts)
 
 

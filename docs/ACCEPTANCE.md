@@ -99,6 +99,9 @@
   已经是 `发送者（备注：…）：正文`，渲染方原样输出；只有缺 `summary` 的旧格式才补前缀
 - ✅ E12 纯媒体消息渲染成板里的占位符（`甲：[图片]`），不编造 `messageKey`；
   `summary` 里由 iiBot 附带的 `(messageKey=…)` 原样保留，Agent 可直接调 `qq_media_get`
+- ✅ E15 **摘要段与正文段不重复同一条**：正文段已整条渲染的 `itemId` 不再出现在摘要块里
+  （`summary_block(skip_item_ids=…)`）；若所有 available 条目都进了正文，摘要块整块省略。
+  理由：摘要行的 `title` 就是 iiBot 的行内摘要（`发送者：正文`），两段都渲染等于同一条消息出现两次
 - ✅ E13 超预算时显式标注：单条超限 → `（正文超出单条上限，已截断；以工具读取结果为准）`；
   整段超限 → `- 还有 N 条正文未渲染（调大 wakeContentTotalChars 或缩小 wakeContentMaxChars）`
 - ✅ E14 渲染顺序 = 服务端 `listAvailable` 的 `priority DESC, created_at ASC`
