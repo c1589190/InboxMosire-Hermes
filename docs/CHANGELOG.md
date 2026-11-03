@@ -5,6 +5,17 @@
 
 ## 未发布（HEAD）
 
+### 文档：图片读不到时先查 `model.supports_vision`（2026-11-03）
+
+- 现象：Bot 回「我读不了图」，`qq_media_get` 只给出 `MEDIA:/…` 路径。
+- 根因：宿主 `agent/image_routing.py:_supports_vision_override()` 只认配置里的
+  `model.supports_vision` / `providers.<p>.models.<m>.supports_vision`；目录里没有
+  `custom:newapi` + `deepseek-flash` 的能力记录 → `decide_image_input_mode()` 返回 `text`，
+  MCP `ImageContent` 走不到 `_mcp_result_with_native_images()` 的原生附图分支。
+- 处置：`model.supports_vision: true` + 重启 gateway。实测该 route 接受 `role=tool` 里的
+  图文块列表（直连 newapi 往返验证：64×64 纯红图 → 模型答「红色」）。
+- 文档：ONBOARD 提示词 B 增加一行；RUNBOOK §7 排障表新增一行。
+
 ### 摘要段不再重复列出正文已渲染的条目（2026-11-03 真机反馈·续）
 
 - 症状：同一条消息在注入里出现两次（摘要行的 `title` = iiBot 行内摘要 `发送者：正文`，

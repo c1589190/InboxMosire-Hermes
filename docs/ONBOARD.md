@@ -69,6 +69,8 @@
 >    ```bash
 >    hermes mcp add iibot         --url http://127.0.0.1:8765/mcp/bot --auth header
 >    hermes mcp add inbox-mosire  --url http://127.0.0.1:46501/mcp    --auth header
+>    # 视觉能力：custom:<name> 上的模型宿主目录里查不到，不声明就只能拿到 MEDIA: 路径
+>    hermes config set model.supports_vision true
 >    hermes mcp test iibot
 >    hermes mcp test inbox-mosire
 >    ```
