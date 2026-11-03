@@ -5,6 +5,14 @@
 
 ## 未发布（HEAD）
 
+### 冷启动取证脚本 + 「第一推动力」约束（2026-11-03）
+
+- 新增 `scripts/acceptance-coldstart.sh`（`probe|stop|start|watch|all`）：采集三个端口、
+  `/v1/status`（带 0600 token）、两个 MCP 端点的 `initialize` 握手；不启停 Hermes，
+  N1/N4 的会话侧断言仍由人工确认。
+- `docs/COLDSTART.md` 新增 §4.1：`programToolsRequired` 守卫与「靠 Inbox 唤醒自启动」在冷启动时
+  互斥，第一推动力只能是 A（人手动一句）或 B（宿主定时器，未验证），不推荐关守卫自救。
+
 ### 对齐真实 Inbox 契约：来源字符串、正文取详情、频道贯穿、默认 view-ack（2026-11-03）
 
 - **`source` 不再是对象**：Inbox 的 `source` 是字符串地址（iiBot 写

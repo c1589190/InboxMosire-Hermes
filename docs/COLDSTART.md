@@ -82,6 +82,26 @@ Inbox 侧不需要重启 Hermes：adapter 的 SSE/对账轮询会自行重连（
 
 ---
 
+## 4.1 「第一推动力」只能是外部输入（定调 m00468 / m00614）
+
+`programToolsRequired=true`（默认）时，**程序 MCP 工具不在位就不唤醒**（`wake.skipped
+reason=program-tools-missing`）。这条守卫和「靠 Inbox 唤醒触发自启动」在冷启动时**互斥**：
+jar 没起 → 46500/46501 不存在 → 没有 Inbox 事件；就算有事件，`qq_*` 也没注册进来。
+
+所以第一推动力只有两种：
+
+- **A（当前形态）**：人在会话里说一句（「起 bot」/「看一下消息」）。人设里的自启动段让模型
+  发现 `qq_conversation_list` 缺失 → 跑 `./start-bot.sh start` → 探测端口 → **结束本回合**
+  （新工具只在下一轮开头的快照里出现）。
+- **B（未验证）**：宿主侧的定时器/外部 cron 在 gateway 里先产生一个 turn。宿主的
+  `pre_gateway_dispatch` / cron 槽位存在，但「无人说话也起 turn」这条路径**没有取证**。
+
+不推荐 C（把 `programToolsRequired` 关掉换取「先唤醒再自救」）：那会退化成「唤醒到了却调不了
+`qq_conversation_read`」，在 ops log 里制造一堆假故障。
+
+补充：即使将来 Inbox 改成独立进程先于 iiBot 起来，「哪条先来哪条带契约」也不需要特殊处理——
+注入判据是「对话表面有没有当前 persona hash」，与第几轮无关（`persona.py:has_contract()`）。
+
 ## 5. 人设片段（建议；**未落到 `bot/PERSONA.md`**）
 
 > 工作区约定：`bot/` 是运行目录，本仓库不改它的源码（`AGENTS.md` §5）。以下文本由操作者决定是否粘贴
@@ -98,7 +118,10 @@ Inbox 侧不需要重启 Hermes：adapter 的 SSE/对账轮询会自行重连（
 
 ---
 
-## 6. 验收（全部 `未验证`）
+## 6. 验收（`未验证`；取证脚本 `scripts/acceptance-coldstart.sh`）
+
+`./scripts/acceptance-coldstart.sh probe|stop|start|watch|all` 采集端口、`/v1/status`、
+两个 MCP 端点的握手结果，并把会话侧的 N1/N4 断言留给人工（脚本不碰 Hermes 进程）。
 
 | 编号 | 断言 | 状态 |
 |---|---|---|

@@ -177,6 +177,9 @@ gateway 一启动 `resume_all()` 就把 6 个历史会话（`source=oneshot`，�
 
 ## N. 冷启动自举（2026-11-03 新增）
 
+取证脚本：`./scripts/acceptance-coldstart.sh probe|stop|start|watch|all`（只采集事实，不碰 Hermes 进程）。
+第一推动力只能是外部输入（A 人手动 / B 宿主定时器，未验证），见 `docs/COLDSTART.md` §4.1。
+
 设计见 `docs/COLDSTART.md`。全部 `未验证`（无真机轮次）；单测覆盖项另行标注。
 
 - ⬜ N1 只停 iiBot、gateway 常驻：工具面无 `qq_conversation_list`，`health.programMcp == "missing"`
