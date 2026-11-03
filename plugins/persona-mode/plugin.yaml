@@ -1,5 +1,5 @@
 name: persona-mode
-version: "0.1.0"
+version: "0.2.0"
 description: "The role-play mode: the two-sentence role line plus the operator-authored PERSONA.md contract travel as ONE per-turn user-message injection (hash-based dedupe, automatic re-anchoring after compaction), leaving the system prompt to minimal-system / agent.system_prompt_override, plus an outbound-tool guard while the file is missing. Ports @mosire/dsh-persona-mode to Hermes."
 author: "c1589190"
 manifest_version: 2

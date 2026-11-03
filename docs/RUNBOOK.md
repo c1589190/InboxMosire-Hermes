@@ -161,23 +161,66 @@ nohup hermes gateway run >> ~/.hermes/logs/gateway.log 2>&1 &
 
 ## 4. 升级 / 回滚
 
-```bash
-# 升级
-git pull
-cp plugins/inbox-wake/*.py plugins/inbox-wake/plugin.yaml "$HOME/.hermes/plugins/inbox-wake/" 2>/dev/null
-cp plugins/inbox-wake/lib/*.py "$HOME/.hermes/plugins/inbox-wake/lib/"
-rm -rf "$HOME/.hermes/plugins/inbox-wake/__pycache__" "$HOME/.hermes/plugins/inbox-wake/lib/__pycache__"
-# 停 + 启 gateway（§3）
-hermes plugins doctor inbox-wake
+三个插件（`persona-mode` / `inbox-wake` / `minimal-system`）都是纯 Python，
+升级 = 换目录 + 让进程重新 `register(ctx)`，不涉及数据迁移。
 
-# 回滚
-hermes plugins disable inbox-wake
-cp -r /path/to/previous/inbox-wake "$HOME/.hermes/plugins/"
-hermes plugins enable inbox-wake
-# 停 + 启 gateway
+### 4.1 一条命令（本地或远端 checkout）
+
+```bash
+cd <仓库>
+git pull                       # 或 git checkout <tag/commit>
+./scripts/sync-plugins.sh --dry-run   # 先看：已装版本 → 源版本、以及哪些文件会变
+./scripts/sync-plugins.sh             # 整目录替换（先删后拷）+ 清 __pycache__
+./scripts/sync-plugins.sh --restart   # 复制后停+起 gateway（远端常用）
+```
+
+脚本只动 `$HERMES_HOME/plugins/<id>`，不碰 settings、`plugin-data`、token。
+`--only inbox-wake` 可只同步一个，`--target /home/ops/.hermes` 可指定别人的 HOME。
+
+### 4.2 从开发机推到远端（远端不 checkout 时）
+
+```bash
+rsync -a --delete \
+  --exclude __pycache__ \
+  plugins/persona-mode plugins/inbox-wake plugins/minimal-system \
+  ops@host:.hermes/plugins/
+ssh ops@host 'hermes plugins doctor inbox-wake'
+```
+
+体积很小（每个插件 20–160 KB），不需要打 tar。
+
+### 4.3 升级后必须做的一步
+
+插件代码与 hook 只在 `register(ctx)` 时生效：
+
+- 常驻 gateway：重启 gateway（`sync-plugins.sh --restart`，或 §3 的 stop + run）；
+  `hermes plugins enable <id>` 也能让 gateway 跑 `reload-plugins` 重挂 hook，
+  但 `tools` 与 `system_prompt_section` 按 prompt-cache 不变量延后到下一个 session。
+- 一次性会话：下次启动自然加载。
+- 新增插件（例如第一次装 `minimal-system`）：先确认 `~/.hermes/config.yaml` 的
+  `plugins.enabled` 里有它，否则装进目录也不会加载。
+
+### 4.4 宿主补丁（只有打过极简 system 时才需要）
+
+```bash
+./scripts/patch-hermes.sh check   # 0=已应用 / 1=可打 / 3=宿主源码变了需人工
+./scripts/patch-hermes.sh apply   # 依赖 patches/0001-host-system-prompt-override.patch
+```
+
+宿主升级后补丁通常会被覆盖，`check` 返回 1 就重新 `apply`；返回 3 说明上游改了同一区域，
+要人工看。
+
+### 4.5 回滚
+
+```bash
+hermes plugins disable inbox-wake          # 或三个都 disable
+git checkout <上一个 commit>
+./scripts/sync-plugins.sh --restart
+hermes plugins enable inbox-wake persona-mode minimal-system
 ```
 
 状态备份：`~/.hermes/plugin-data/agent-plugin-inbox-wake-*/state.json`（0600，含 bindings / ops 事件流）。
+旧目录不会被脚本保留，需要留档就先 `cp -a ~/.hermes/plugins/inbox-wake /tmp/inbox-wake.<rev>`。
 
 ---
 

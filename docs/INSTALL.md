@@ -125,6 +125,18 @@ grep -c 'persona-hash' <session 转写>
 # 把 PERSONA.md 临时改名 → 外发工具应被 block，且只出现一次 persona-missing 提示
 ```
 
+## 5.1 已装旧版怎么升级
+
+```bash
+git pull
+./scripts/sync-plugins.sh --dry-run   # 已装版本 → 源版本，以及哪些文件会变
+./scripts/sync-plugins.sh --restart   # 整目录替换 + 清 __pycache__ + 重启 gateway
+hermes plugins doctor persona-mode inbox-wake minimal-system
+```
+
+远端不 checkout 时用 `rsync -a --delete --exclude __pycache__ plugins/{persona-mode,inbox-wake,minimal-system} ops@host:.hermes/plugins/`。
+细节与回滚见 `docs/RUNBOOK.md` §4。
+
 ## 6. kit：一个目录 + 一句话自动挂载
 
 `kit/` 是给"我只想放个 jar + 一份说明，然后开 hermes 说话就挂上"的场景准备的最小发行包：
