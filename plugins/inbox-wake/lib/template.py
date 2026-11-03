@@ -105,26 +105,33 @@ def content_block(
     total_chars: int,
 ) -> str:
     """Opt-in body preview (``wakeContent=bounded|full``); still bounded and clearly marked."""
+    records = list(entries)
     lines: list[str] = [CONTENT_INTRO]
     used = len(lines[0])
     shown = 0
     truncated = False
-    for item in entries:
+    for item in records:
         view = safe.item_content(item, max_chars=per_item_chars)
         if view is None:
             continue
-        text = view["content"]
-        line = f"- [{safe.clean_text(view['itemId'], 64)}] ({view['kind']}) {text}"
-        if used + len(line) + 1 > total_chars and shown:
+        prefix = f"- [{safe.clean_text(view['itemId'], 64)}] ({view['kind']})"
+        if view.get("source"):
+            prefix += f" source={safe.clean_text(view['source'], 200)}"
+        body_lines = ["  " + line for line in view["content"].split("\n")]
+        block = "\n".join([prefix, *body_lines])
+        if used + len(block) + 1 > total_chars and shown:
             truncated = True
             break
-        lines.append(line)
-        used += len(line) + 1
+        lines.append(block)
+        used += len(block) + 1
         shown += 1
         if view.get("truncated"):
             truncated = True
     if truncated:
         lines.append(CONTENT_TRUNCATED)
+    skipped = max(0, len(records) - shown)
+    if skipped:
+        lines.append(f"- 还有 {skipped} 条正文未渲染（调大 wakeContentTotalChars 或缩小 wakeContentMaxChars）")
     return "\n".join(lines) if shown else ""
 
 
@@ -138,12 +145,12 @@ def build_wake(
     profile: str = "generic",
     summary_items: Sequence[Mapping[str, Any]] = (),
     summary_remaining: int = 0,
-    summary_max_items: int = 3,
-    summary_max_total_chars: int = 1200,
-    summary_max_title_chars: int = 80,
+    summary_max_items: int = 20,
+    summary_max_total_chars: int = 6000,
+    summary_max_title_chars: int = 120,
     content_items: Sequence[Mapping[str, Any]] = (),
-    content_max_chars: int = 4000,
-    content_total_chars: int = 12000,
+    content_max_chars: int = 12000,
+    content_total_chars: int = 30000,
     content_enabled: bool = False,
 ) -> str:
     """Compose the wake message: header, instructions, optional summary, optional body."""

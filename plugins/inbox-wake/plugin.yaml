@@ -80,10 +80,23 @@ config_schema:
     label: 唤醒时附带有界摘要
   summaryMaxItems:
     type: int
-    label: 摘要最多条目数（1-50，字符预算才是主护栏）
+    label: 摘要/正文最多条目数（1-50，默认 20；服务端按 priority DESC 排序）
+  summaryMaxTitleChars:
+    type: int
+    label: 摘要行标题最多字符数（8-400，默认 120）
+  summaryMaxTotalChars:
+    type: int
+    label: 摘要块总预算（120-20000，默认 6000）
   wakeContent:
     type: str
     label: 唤醒正文策略（off / bounded / full）
+    description: bounded/full 会把每条条目的正文渲染进唤醒消息（按 service 的 priority DESC 顺序），目标是一次给够、不再补调 read。
+  wakeContentMaxChars:
+    type: int
+    label: 单条正文最多字符数（80-100000，默认 12000）
+  wakeContentTotalChars:
+    type: int
+    label: 正文段总预算（200-200000，默认 30000）
   debounceMs:
     type: int
     label: 事件去抖（毫秒）

@@ -1,7 +1,7 @@
 # 验收清单
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（149 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（152 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -86,7 +86,16 @@
   `[localSeq sender] summary` 逐行，而不是整份 JSON
 - ✅ E8 **频道过滤贯穿查询**：`status()` / `items()` 都带 `channel=`（重复键 + `doseq` 编码），
   服务端 `channels()` 支持重复键（`InboxHttpServer.java:827-848`）；绑定 `channels` 为空则不传
-- ✅ E9 `summaryMaxItems` 不再被硬钳到 3（1..50，默认 5），字符预算 `summaryMaxTotalChars` 仍是主护栏
+- ✅ E9 `summaryMaxItems` 不再被硬钳到 3（1..50，默认 20），字符预算 `summaryMaxTotalChars`（默认 6000）
+  仍是主护栏；`wakeContentMaxChars` / `wakeContentTotalChars` 默认 12000 / 30000
+- ✅ E11 **正文段是「一次给够」的快照**：iiBot 的 digest JSON 由 `safe.content_text()` 渲染成
+  板头（`来源=` / `未读=` / `还有更多未读` / `唤醒原因=`）+ `--- 待处理 ---` 全部消息 +
+  `--- 上文 ---`；逐条 `[localSeq sender] body`，单条上限 2000 字符、最多 200 条，
+  **不再按旧的 400 字符掐断、也不再丢 context**；纯媒体消息只留 `[图片]` 占位，不编造 messageKey
+- ✅ E12 超预算时显式标注：单条超限 → `（正文超出单条上限，已截断；以工具读取结果为准）`；
+  整段超限 → `- 还有 N 条正文未渲染（调大 wakeContentTotalChars 或缩小 wakeContentMaxChars）`
+- ✅ E13 渲染顺序 = 服务端 `listAvailable` 的 `priority DESC, created_at ASC`
+  （`SqliteInboxStore.java:392-397`），即「权重优先的那一部分先看」
 - ✅ E10 默认 `wakeMode` 从 `claim` 改为 `view-ack`（iiBot 主流程是「读→ack 推进未读」；
   非法值告警回退 view-ack）
 - 🟡 E6 固定指令段**永不**被截断（即使 content 段很长）

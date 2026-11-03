@@ -114,13 +114,13 @@ class Config:
         # 「最多三条」是原先的人为限制：一张板可能有几十条来源消息，硬钳 3 条只会让
         # Agent 反复补调工具。字符预算（summaryMaxTotalChars）才是真正的护栏。
         cfg.summary_max_items = safe.coerce_int(
-            get("summaryMaxItems"), 5, minimum=1, maximum=50
+            get("summaryMaxItems"), 20, minimum=1, maximum=50
         )
         cfg.summary_max_title_chars = safe.coerce_int(
-            get("summaryMaxTitleChars"), 80, minimum=8, maximum=200
+            get("summaryMaxTitleChars"), 120, minimum=8, maximum=400
         )
         cfg.summary_max_total_chars = safe.coerce_int(
-            get("summaryMaxTotalChars"), 1200, minimum=120, maximum=8000
+            get("summaryMaxTotalChars"), 6000, minimum=120, maximum=20000
         )
 
         content = str(get("wakeContent") or DEFAULT_WAKE_CONTENT).strip().lower()
@@ -129,10 +129,10 @@ class Config:
             content = DEFAULT_WAKE_CONTENT
         cfg.wake_content = content
         cfg.wake_content_max_chars = safe.coerce_int(
-            get("wakeContentMaxChars"), 4000, minimum=80, maximum=8000
+            get("wakeContentMaxChars"), 12000, minimum=80, maximum=100000
         )
         cfg.wake_content_total_chars = safe.coerce_int(
-            get("wakeContentTotalChars"), 12000, minimum=200, maximum=24000
+            get("wakeContentTotalChars"), 30000, minimum=200, maximum=200000
         )
 
         cfg.debounce_ms = safe.coerce_int(get("debounceMs"), 300, minimum=0, maximum=10000)

@@ -51,6 +51,33 @@ def clean_text(value: Any, limit: int) -> str:
     return text
 
 
+def clean_block(value: Any, limit: int) -> str:
+    """Like :func:`clean_text` but **keeps line breaks** (renderers need them).
+
+    正文段是给模型读的多行文本（``[11 小明] 在吗``），压平成一行会失去逐条结构；
+    这里只做三件事：统一换行、去掉制表/控制字符、把连续空行收到一行、超长截断。
+    """
+    if value is None:
+        return ""
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+    text = CONTROL_RE.sub(" ", text)
+    lines = [line.rstrip() for line in text.split("\n")]
+    out: list[str] = []
+    blank = False
+    for line in lines:
+        if not line:
+            if blank:
+                continue
+            blank = True
+        else:
+            blank = False
+        out.append(line)
+    text = "\n".join(out).strip()
+    if limit > 0 and len(text) > limit:
+        text = text[: max(0, limit - 1)] + "\u2026"
+    return text
+
+
 def clean_kind(value: Any, limit: int = 40) -> str:
     text = clean_text(value, limit).lower()
     if not text or not KIND_RE.fullmatch(text):
@@ -106,13 +133,14 @@ def item_brief(item: Any, *, max_title_chars: int = 80) -> Optional[dict[str, An
     return brief
 
 
-def content_text(raw: Any) -> str:
-    """Render an Inbox item's ``content`` into readable text.
+def content_text(
+    raw: Any, *, max_messages: int = 200, per_message_chars: int = 2000
+) -> str:
+    """Render an Inbox item's ``content`` into readable text for the wake message.
 
-    iiBot 的 digest 把整份 ``InboxDigest`` 序列化成 JSON 放进 content，
-    直接塞进唤醒正文会是一行 5000 字符的 JSON。这里把它展开成
-    ``[seq] sender: summary`` 的逐条列表（其余信封字段丢弃），
-    不是 JSON、或不是我们认识的形状时原样返回。
+    iiBot 的 digest 把整份 ``InboxDigest`` 序列化成 JSON 放进 content。目标是**一次给够**：
+    把待处理窗口里的每条消息都渲染出来（顺带上下文窗口），这样 Agent 不用再补一次
+    ``qq_conversation_read``。不是 JSON、或不是这个形状时原样返回。
     """
     if not isinstance(raw, str):
         raw = str(raw or "")
@@ -128,19 +156,63 @@ def content_text(raw: Any) -> str:
     messages = payload.get("messages")
     if not isinstance(messages, list) or not messages:
         return raw
-    lines: list[str] = []
-    for message in messages:
+
+    def render(message: Any) -> str:
         if not isinstance(message, Mapping):
-            continue
+            return ""
         seq = message.get("localSeq")
-        sender = clean_text(message.get("senderName") or message.get("senderId") or "?", 32)
-        who = f"{seq} {sender}".strip() if seq is not None else sender
-        body = message.get("summary") or message.get("note") or message.get("text") or ""
-        body = clean_text(body, 400)
+        sender = clean_text(
+            message.get("senderName") or message.get("senderId") or "?", 32
+        ) or "?"
+        who = f"{seq} {sender}" if seq is not None else sender
+        body = (
+            message.get("summary")
+            or message.get("text")
+            or message.get("nonTextSummary")
+            or ""
+        )
+        body = clean_text(body, per_message_chars)
         if not body:
-            body = clean_text(message.get("nonTextSummary"), 120) or "(无正文)"
-        lines.append(f"[{who}] {body}" if who else body)
-    return "\n".join(lines) if lines else raw
+            body = "(无正文，可能只有图片/文件；用 qq_media_get 取)"
+        note = clean_text(message.get("note"), 80)
+        if note:
+            body = f"{body}（备注：{note}）"
+        return f"[{who}] {body}"
+
+    head: list[str] = []
+    source = clean_text(payload.get("source") if isinstance(payload.get("source"), str) else "", 120)
+    if source:
+        head.append(f"来源={source}")
+    unread = payload.get("unreadCount")
+    if isinstance(unread, int):
+        head.append(f"未读={unread}")
+    if payload.get("hasMoreUnread"):
+        head.append("还有更多未读")
+    reason = clean_text(payload.get("wakeReason"), 24)
+    if reason:
+        head.append(f"唤醒原因={reason}")
+    lines: list[str] = []
+    if head:
+        lines.append(" ".join(head))
+    lines.append("--- 待处理 ---")
+    shown = 0
+    for message in messages:
+        if shown >= max_messages:
+            lines.append(f"(还有 {len(messages) - shown} 条未渲染)")
+            break
+        line = render(message)
+        if not line:
+            continue
+        lines.append(line)
+        shown += 1
+    context = payload.get("context")
+    if isinstance(context, list) and context:
+        lines.append("--- 上文 ---")
+        for message in context[-max_messages:]:
+            line = render(message)
+            if line:
+                lines.append(line)
+    return "\n".join(lines)
 
 
 def item_content(item: Any, *, max_chars: int) -> Optional[dict[str, Any]]:
@@ -151,14 +223,16 @@ def item_content(item: Any, *, max_chars: int) -> Optional[dict[str, Any]]:
     if not is_safe_id(item_id):
         return None
     raw = item.get("content") or item.get("body") or item.get("text") or ""
-    body = clean_text(content_text(raw), max_chars) if raw else ""
+    rendered = content_text(raw) if raw else ""
+    body = clean_block(rendered, max_chars)
     if not body:
         return None
     return {
         "itemId": item_id,
         "kind": clean_kind(item.get("kind")),
+        "source": source_ref(item),
         "content": body,
-        "truncated": bool(raw and len(clean_text(raw, 0)) > max_chars > 0),
+        "truncated": bool(rendered and len(rendered) > max_chars > 0),
     }
 
 

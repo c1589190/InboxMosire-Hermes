@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -69,10 +70,42 @@ class SafeTests(unittest.TestCase):
         text = safe.content_text(
             '{"threadId":"t","messages":[{"localSeq":11,"senderName":"小明","summary":"在吗"}]}'
         )
-        self.assertEqual(text, "[11 小明] 在吗")
+        self.assertIn("[11 小明] 在吗", text)
+        self.assertIn("--- 待处理 ---", text)
         self.assertEqual(safe.content_text("普通正文"), "普通正文")
         self.assertEqual(safe.content_text("{not json"), "{not json")
         self.assertEqual(safe.content_text('{"messages":[]}'), '{"messages":[]}')
+
+    def test_content_text_renders_every_message_without_the_old_400_char_cap(self) -> None:
+        long_body = "很长的正文" * 300  # 1500 字符，旧实现会掐到 400
+        payload = json.dumps(
+            {
+                "source": "qq_group/1/2",
+                "unreadCount": 2,
+                "messages": [
+                    {"localSeq": 1, "senderName": "甲", "summary": long_body},
+                    {"localSeq": 2, "senderName": "乙", "summary": "第二条"},
+                ],
+                "context": [{"localSeq": 0, "senderName": "丙", "summary": "上文"}],
+            },
+            ensure_ascii=False,
+        )
+        text = safe.content_text(payload)
+        self.assertIn("来源=qq_group/1/2", text)
+        self.assertIn("未读=2", text)
+        self.assertIn("第二条", text)
+        self.assertIn("[0 丙] 上文", text)
+        self.assertGreater(len(text), 1500)  # 长正文完整保留
+
+    def test_content_text_keeps_media_placeholders(self) -> None:
+        """只知道「有图片」时只留占位符，绝不编造 messageKey（板里目前也没有它）。"""
+        payload = json.dumps(
+            {"messages": [{"localSeq": 5, "senderName": "甲", "nonTextSummary": "[图片]"}]},
+            ensure_ascii=False,
+        )
+        text = safe.content_text(payload)
+        self.assertIn("[5 甲] [图片]", text)
+        self.assertNotIn("messageKey", text)
 
     def test_item_content_is_bounded(self) -> None:
         view = safe.item_content({"itemId": "i1", "kind": "message", "content": "x" * 100}, max_chars=10)
@@ -95,9 +128,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.wake_profile, "generic")
         self.assertEqual(cfg.debounce_ms, 300)
         self.assertEqual(cfg.heartbeat_timeout_seconds, 45)
-        self.assertEqual(cfg.summary_max_items, 5)
-        self.assertEqual(cfg.summary_max_title_chars, 80)
-        self.assertEqual(cfg.summary_max_total_chars, 1200)
+        self.assertEqual(cfg.summary_max_items, 20)
+        self.assertEqual(cfg.summary_max_title_chars, 120)
+        self.assertEqual(cfg.summary_max_total_chars, 6000)
+        self.assertEqual(cfg.wake_content_max_chars, 12000)
+        self.assertEqual(cfg.wake_content_total_chars, 30000)
         self.assertEqual(cfg.wake_content, "bounded")
         self.assertEqual(cfg.wake_backoff_base_ms, 30000)
         self.assertEqual(cfg.wake_backoff_max_ms, 900000)
@@ -135,6 +170,28 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.backoff_ms(1), 30000)
         self.assertEqual(cfg.backoff_ms(2), 60000)
         self.assertEqual(cfg.backoff_ms(10), 900000)
+
+
+class ContentBlockTests(unittest.TestCase):
+    def test_content_block_keeps_line_structure_and_source(self) -> None:
+        body = json.dumps(
+            {
+                "source": "qq_group/1/2",
+                "messages": [
+                    {"localSeq": 1, "senderName": "甲", "summary": "在吗"},
+                    {"localSeq": 2, "senderName": "乙", "summary": "在"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+        text = template.content_block(
+            [{"itemId": "i1", "kind": "digest", "source": "qq_group/1/2", "content": body}],
+            per_item_chars=30000,
+            total_chars=100000,
+        )
+        self.assertIn("- [i1] (digest) source=qq_group/1/2", text)
+        self.assertIn("  [1 甲] 在吗", text)
+        self.assertIn("  [2 乙] 在", text)
 
 
 class TemplateTests(unittest.TestCase):
@@ -218,7 +275,7 @@ class TemplateTests(unittest.TestCase):
         )
         lines = text.splitlines()
         self.assertTrue(lines[0].startswith("[INBOX_HOST_EVENT]"))
-        self.assertIn("摘要（最多 3 条", text)
+        self.assertIn("摘要（最多 20 条", text)
         self.assertLess(text.index("inbox_claim"), text.index("摘要"))
 
 
