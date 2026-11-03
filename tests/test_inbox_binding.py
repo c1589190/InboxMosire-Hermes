@@ -419,8 +419,8 @@ class WakeDecisionTests(Base):
         ]
         self.wake()
         text, _ = self.injected[0]
-        self.assertIn("[11 小明] 在吗", text)
-        self.assertIn("[12 小王] 在的", text)
+        self.assertIn("小明：在吗", text)
+        self.assertIn("小王：在的", text)
         self.assertNotIn("threadId", text)
 
     def test_wake_content_skips_items_whose_detail_fails(self):

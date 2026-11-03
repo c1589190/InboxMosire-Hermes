@@ -70,8 +70,8 @@ class SafeTests(unittest.TestCase):
         text = safe.content_text(
             '{"threadId":"t","messages":[{"localSeq":11,"senderName":"小明","summary":"在吗"}]}'
         )
-        self.assertIn("[11 小明] 在吗", text)
-        self.assertIn("--- 待处理 ---", text)
+        self.assertIn("小明：在吗", text)
+        self.assertNotIn("待处理", text)  # 不再拆「待处理 / 上文」两段
         self.assertEqual(safe.content_text("普通正文"), "普通正文")
         self.assertEqual(safe.content_text("{not json"), "{not json")
         self.assertEqual(safe.content_text('{"messages":[]}'), '{"messages":[]}')
@@ -91,10 +91,9 @@ class SafeTests(unittest.TestCase):
             ensure_ascii=False,
         )
         text = safe.content_text(payload)
-        self.assertIn("来源=qq_group/1/2", text)
         self.assertIn("未读=2", text)
-        self.assertIn("第二条", text)
-        self.assertIn("[0 丙] 上文", text)
+        self.assertIn("乙：第二条", text)
+        self.assertIn("丙：上文", text)
         self.assertGreater(len(text), 1500)  # 长正文完整保留
 
     def test_content_text_keeps_media_placeholders(self) -> None:
@@ -104,8 +103,32 @@ class SafeTests(unittest.TestCase):
             ensure_ascii=False,
         )
         text = safe.content_text(payload)
-        self.assertIn("[5 甲] [图片]", text)
+        self.assertIn("甲：[图片]", text)
         self.assertNotIn("messageKey", text)
+
+    def test_content_text_merges_context_and_messages_into_one_timeline(self) -> None:
+        """context 与 messages 本来就是同一段滚动窗口：合并、按 localSeq 排序、去重。"""
+        payload = json.dumps(
+            {
+                "source": "qq_group/1/2",
+                "unreadCount": 2,
+                "toSeq": 12,
+                "context": [
+                    {"localSeq": 10, "senderName": "丙", "summary": "更早"},
+                    {"localSeq": 11, "senderName": "甲", "summary": "在吗"},
+                ],
+                "messages": [
+                    {"localSeq": 11, "senderName": "甲", "summary": "在吗"},  # 与 context 重叠
+                    {"localSeq": 12, "senderName": "乙", "summary": "在的"},
+                ],
+            },
+            ensure_ascii=False,
+        )
+        meta, timeline = safe.content_parts(payload)
+        self.assertEqual(meta, "未读=2")  # 来源不在这里重复，由渲染方挂在编号行
+        lines = timeline.splitlines()
+        self.assertEqual(lines[0:3], ["丙：更早", "甲：在吗", "乙：在的"])
+        self.assertEqual(lines[3], "(本窗口 3 条，最新 seq=12)")
 
     def test_item_content_is_bounded(self) -> None:
         view = safe.item_content({"itemId": "i1", "kind": "message", "content": "x" * 100}, max_chars=10)
@@ -173,7 +196,7 @@ class ConfigTests(unittest.TestCase):
 
 
 class ContentBlockTests(unittest.TestCase):
-    def test_content_block_keeps_line_structure_and_source(self) -> None:
+    def test_content_block_numbers_sources_and_indents_the_timeline(self) -> None:
         body = json.dumps(
             {
                 "source": "qq_group/1/2",
@@ -185,13 +208,17 @@ class ContentBlockTests(unittest.TestCase):
             ensure_ascii=False,
         )
         text = template.content_block(
-            [{"itemId": "i1", "kind": "digest", "source": "qq_group/1/2", "content": body}],
+            [
+                {"itemId": "i1", "kind": "digest", "source": "qq_group/1/2", "content": body},
+                {"itemId": "i2", "kind": "digest", "source": "qq_group/3/4", "content": body},
+            ],
             per_item_chars=30000,
             total_chars=100000,
         )
-        self.assertIn("- [i1] (digest) source=qq_group/1/2", text)
-        self.assertIn("  [1 甲] 在吗", text)
-        self.assertIn("  [2 乙] 在", text)
+        self.assertIn("1) source=qq_group/1/2", text)
+        self.assertIn("2) source=qq_group/3/4", text)
+        self.assertIn("   甲：在吗", text)
+        self.assertNotIn("[i1]", text)
 
 
 class TemplateTests(unittest.TestCase):

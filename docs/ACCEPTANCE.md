@@ -88,13 +88,14 @@
   服务端 `channels()` 支持重复键（`InboxHttpServer.java:827-848`）；绑定 `channels` 为空则不传
 - ✅ E9 `summaryMaxItems` 不再被硬钳到 3（1..50，默认 20），字符预算 `summaryMaxTotalChars`（默认 6000）
   仍是主护栏；`wakeContentMaxChars` / `wakeContentTotalChars` 默认 12000 / 30000
-- ✅ E11 **正文段是「一次给够」的快照**：iiBot 的 digest JSON 由 `safe.content_text()` 渲染成
-  板头（`来源=` / `未读=` / `还有更多未读` / `唤醒原因=`）+ `--- 待处理 ---` 全部消息 +
-  `--- 上文 ---`；逐条 `[localSeq sender] body`，单条上限 2000 字符、最多 200 条，
-  **不再按旧的 400 字符掐断、也不再丢 context**；纯媒体消息只留 `[图片]` 占位，不编造 messageKey
-- ✅ E12 超预算时显式标注：单条超限 → `（正文超出单条上限，已截断；以工具读取结果为准）`；
+- ✅ E11 **正文段 = 每个来源一条时间线**：`safe.content_parts()` 把 digest 的 `context` 与 `messages`
+  合并、按 `localSeq` 去重排序，渲染成 `名字：正文` 的连续对话（不再拆「待处理 / 上文」两段）；
+  来源挂在这一段的编号行（`1) source=qq_group/… 未读=3`），窗口末尾就是最新一条，
+  末尾补 `(本窗口 N 条，最新 seq=12)` 供 ack 使用
+- ✅ E12 纯媒体消息渲染成板里的占位符（`甲：[图片]`），不编造 `messageKey`
+- ✅ E13 超预算时显式标注：单条超限 → `（正文超出单条上限，已截断；以工具读取结果为准）`；
   整段超限 → `- 还有 N 条正文未渲染（调大 wakeContentTotalChars 或缩小 wakeContentMaxChars）`
-- ✅ E13 渲染顺序 = 服务端 `listAvailable` 的 `priority DESC, created_at ASC`
+- ✅ E14 渲染顺序 = 服务端 `listAvailable` 的 `priority DESC, created_at ASC`
   （`SqliteInboxStore.java:392-397`），即「权重优先的那一部分先看」
 - ✅ E10 默认 `wakeMode` 从 `claim` 改为 `view-ack`（iiBot 主流程是「读→ack 推进未读」；
   非法值告警回退 view-ack）

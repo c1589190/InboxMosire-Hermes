@@ -34,8 +34,10 @@
 - **注入配额放大（「一次给够」）**：`summaryMaxItems` 默认 5 → 20、`summaryMaxTitleChars`
   80 → 120、`summaryMaxTotalChars` 1200 → 6000、`wakeContentMaxChars` 4000 → 12000、
   `wakeContentTotalChars` 12000 → 30000（上限分别放到 20000/100000/200000）。
-  正文段改为渲染**整份 digest**：板头（来源/未读/唤醒原因）+ 全部待处理消息 + 上文；
-  单条 2000 字符、最多 200 条；超预算时显式写「还有 N 条正文未渲染」。
+  正文段改为渲染**整份 digest**，每个来源一条时间线：`1) source=… 未读=N` + `名字：正文`
+  （`context` 与 `messages` 合并去重按 `localSeq` 排序，不再拆「待处理/上文」两段），
+  末尾 `(本窗口 N 条，最新 seq=12)`；单条 2000 字符、最多 200 条；
+  超预算时显式写「还有 N 条正文未渲染」。
   目标：Agent 拿到唤醒就能直接处理，不用再补一次 `qq_conversation_read`。
 - **测试** 139 → 152（来源字符串/恶意来源、digest 渲染、详情失败降级、频道贯穿、
   limit 钳到 1..100、重复 `channel=` 编码、整板渲染与预算标注）。

@@ -114,10 +114,12 @@ def content_block(
         view = safe.item_content(item, max_chars=per_item_chars)
         if view is None:
             continue
-        prefix = f"- [{safe.clean_text(view['itemId'], 64)}] ({view['kind']})"
+        prefix = f"{shown + 1})"
         if view.get("source"):
             prefix += f" source={safe.clean_text(view['source'], 200)}"
-        body_lines = ["  " + line for line in view["content"].split("\n")]
+        if view.get("meta"):
+            prefix += f" {view['meta']}"
+        body_lines = ["   " + line for line in view["content"].split("\n")]
         block = "\n".join([prefix, *body_lines])
         if used + len(block) + 1 > total_chars and shown:
             truncated = True
