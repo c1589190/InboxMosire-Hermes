@@ -1,5 +1,5 @@
 name: inbox-wake
-version: "0.2.3"
+version: "0.2.4"
 description: "InboxMosire wake adapter for Hermes: SSE cursor + bound-session wake, bounded untrusted summary, occupancy lease, bind/unbind tools and /inbox command. Business inbox tools (list/claim/push/complete/rest) stay in the InboxMosire MCP server — this plugin only turns notifications into a wake."
 author: "ConstantinXIV"
 manifest_version: 2

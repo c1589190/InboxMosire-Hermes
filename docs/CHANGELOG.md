@@ -7,6 +7,8 @@
 
 ### inbox-wake 0.2.4：token 轮换自愈（2026-11-03）
 
+- 版本：`plugins/inbox-wake/plugin.yaml` 0.2.3 → 0.2.4（本条目对应 tag `v0.2.5`）
+
 - 症状：把运行目录从 `bot/` 换到 `bot2/`（或重启 iiBot）后，唤醒全部静默失效，
   `lastStatus.error` 是 `INBOX_AUTH: 401`；把 `adapterTokenFile` 改对了也要重启 gateway 才恢复。
 - 根因：iiBot 每次启动都无条件重签 `dsh-wake.token` / `program-mcp.token`（`BotInboxRuntime.java:125-146`），
