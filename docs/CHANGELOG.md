@@ -5,7 +5,12 @@
 
 ## 未发布（HEAD）
 
-### minimal-system 0.2.0：系统提示词可外置为 md 文件（2026-11-04）
+### minimal-system 0.2.1：修掉 manifest 里的假字段 + 0.2.0 的系统提示词文件（2026-11-04）
+
+- 0.2.1：删掉 `provides_middleware`——宿主的 `_KNOWN_MANIFEST_FIELDS`（`hermes_cli/plugins_manifest.py:32-39`）
+  只认 `provides_hooks`，`llm_request` 是中间件、没有可声明的字段。旧写法让宿主每次加载都告警
+  `Plugin minimal-system: unknown manifest field(s) ignored: provides_middleware`。
+
 
 - 版本：`plugins/minimal-system/plugin.yaml` 0.1.0 → 0.2.0
 - 需求（用户口径）：「人设扮演模式的 Agent 系统提示词应当是一个单独的完整 md 文件」。

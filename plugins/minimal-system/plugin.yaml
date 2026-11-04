@@ -1,5 +1,5 @@
 name: minimal-system
-version: "0.2.0"
+version: "0.2.1"
 description: "Replace Hermes' assembled system prompt with one constant line, mirroring DSH's minimal preset (complete: true + includeRuntimeContext: false). Uses the public llm_request middleware, so nothing about the host prompt builder is patched."
 author: "c1589190"
 manifest_version: 2
@@ -7,8 +7,9 @@ api_version: 1
 license: "MIT"
 homepage: "https://github.com/c1589190/InboxMosire-Hermes"
 tags: ["system-prompt", "minimal", "dsh-parity", "middleware"]
-provides_middleware:
-  - llm_request
+# 注意：Hermes 的 manifest 只认 `provides_hooks`（`hermes_cli/plugins_manifest.py:32-39` 的
+# `_KNOWN_MANIFEST_FIELDS`），`llm_request` 是中间件不是 hook，没有可声明的字段；
+# 写成 `provides_middleware` 只会让宿主每轮告警 "unknown manifest field(s) ignored"。
 config_keys:
   - plugins.entries.minimal-system.settings.enabled
   - plugins.entries.minimal-system.settings.systemPrompt
