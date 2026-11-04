@@ -8,14 +8,20 @@ Hermes 没有那个开关，所以在**出站请求的最后一步**用公开的
 调用点在 `agent/turn_api_request.py:156-166`，此时 provider kwargs 已构建完毕）。
 
 替换必须是**字节稳定**的：同一个常量每一轮都发同样的字节，否则前缀缓存每轮失效。
+
+提示词有三种来源，优先级从高到低：``systemPromptFile``（操作者自己的 md/纯文本文件，按 mtime
+缓存、改文件即时生效；留空 = ``$HERMES_HOME/SYSTEM.md``，即 Hermes 自己的目录）> ``systemPrompt``
+（配置项，YAML 块标量可写多行）> 内置常量。
+文件缺失、不可读或为空时静默回落到下一档，任何 I/O 问题都不会让一轮请求失败。
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Optional
 
-from .lib import rewrite
+from .lib import prompt_file, rewrite
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +31,31 @@ DEFAULT_SYSTEM_PROMPT = "You are a helpful software engineer assistant."
 _config: dict[str, Any] = {
     "enabled": True,
     "systemPrompt": DEFAULT_SYSTEM_PROMPT,
+    "systemPromptFile": "",
     "logRewrite": False,
 }
+_readers: dict[str, prompt_file.PromptReader] = {}
+_lock = threading.Lock()
+
+
+def _reader(path: str) -> prompt_file.PromptReader:
+    with _lock:
+        reader = _readers.get(path)
+        if reader is None:
+            reader = prompt_file.PromptReader(path)
+            _readers[path] = reader
+        return reader
+
+
+def _prompt_text() -> tuple[str, str]:
+    """The text to send, and where it came from (``file`` / ``config`` / ``default``)."""
+    configured = str(_config["systemPromptFile"] or "").strip()
+    if configured:
+        text = _reader(prompt_file.resolve_path(configured)).read()
+        if text:
+            return text, "file"
+    inline = str(_config["systemPrompt"] or "").strip()
+    return (inline, "config") if inline else (DEFAULT_SYSTEM_PROMPT, "default")
 
 
 def _load_config(ctx: Any) -> None:
@@ -35,9 +64,13 @@ def _load_config(ctx: Any) -> None:
         return
     try:
         _config["enabled"] = bool(get("enabled", True))
-        text = str(get("systemPrompt", DEFAULT_SYSTEM_PROMPT) or "").strip()
-        if text:
-            _config["systemPrompt"] = text
+        # Every load re-derives both prompts, so a re-register in the same process
+        # (tests, `hermes plugins reload`) never inherits the previous settings.
+        _config["systemPrompt"] = str(get("systemPrompt", DEFAULT_SYSTEM_PROMPT) or "").strip()
+        # 留空就落到 Hermes 自己的目录（$HERMES_HOME/SYSTEM.md），配置文件不用跟着仓库路径漂移
+        _config["systemPromptFile"] = (
+            str(get("systemPromptFile", "") or "").strip() or prompt_file.default_prompt_path()
+        )
         _config["logRewrite"] = bool(get("logRewrite", False))
     except Exception as exc:  # config trouble must never break a request
         logger.warning("minimal-system: cannot read settings, using defaults: %s", exc)
@@ -51,7 +84,7 @@ def _on_llm_request(**kwargs: Any) -> Optional[dict[str, Any]]:
         request = kwargs.get("request")
         if not isinstance(request, dict):
             return None
-        text = str(_config["systemPrompt"])
+        text, source = _prompt_text()
         new_request, shape = rewrite.rewrite_system_prompt(request, text)
         if shape == rewrite.SHAPE_NONE:
             logger.debug("minimal-system: no system prompt slot found (api_mode=%s)", kwargs.get("api_mode"))
@@ -61,8 +94,8 @@ def _on_llm_request(**kwargs: Any) -> Optional[dict[str, Any]]:
         if _config["logRewrite"]:
             before = rewrite.current_system_prompt(request)
             logger.info(
-                "minimal-system: system %d chars -> %d chars (shape=%s, api_mode=%s)",
-                len(before), len(text), shape, kwargs.get("api_mode"),
+                "minimal-system: system %d chars -> %d chars (shape=%s, source=%s, api_mode=%s)",
+                len(before), len(text), shape, source, kwargs.get("api_mode"),
             )
         return {"request": new_request, "source": "minimal-system", "reason": f"system:{shape}"}
     except Exception as exc:  # a middleware bug must not take the turn down
@@ -77,6 +110,8 @@ def register(ctx: Any) -> None:
     except Exception as exc:  # an old host without request middleware: say so, do not crash the loader
         logger.warning("minimal-system: llm_request middleware unavailable: %s", exc)
         return
+    text, source = _prompt_text()
     logger.info(
-        "minimal-system: loaded (enabled=%s, %d chars)", _config["enabled"], len(_config["systemPrompt"])
+        "minimal-system: loaded (enabled=%s, %d chars, source=%s, file=%s)",
+        _config["enabled"], len(text), source, _config["systemPromptFile"] or "-",
     )

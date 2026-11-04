@@ -199,6 +199,9 @@ ssh ops@host 'hermes plugins doctor inbox-wake'
 - 一次性会话：下次启动自然加载。
 - 新增插件（例如第一次装 `minimal-system`）：先确认 `~/.hermes/config.yaml` 的
   `plugins.enabled` 里有它，否则装进目录也不会加载。
+- `minimal-system.systemPromptFile` 的**内容**是热更新的（按 mtime 重读，无需重启）；
+  **路径**（或 `systemPrompt`）改了要重启 gateway。默认路径是 `$HERMES_HOME/SYSTEM.md`，
+  所以把 md 放那儿、什么都不配也能生效（文件不存在则回落 `systemPrompt`，不会报错）。
 
 ### 4.4 宿主补丁（只有打过极简 system 时才需要）
 

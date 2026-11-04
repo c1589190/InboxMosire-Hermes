@@ -1,8 +1,10 @@
-"""minimal-system: 用一句常量替换出站请求里的 system prompt（三种线格式）。"""
+"""minimal-system: 用一句常量（或操作者的 md 文件）替换出站请求里的 system prompt（三种线格式）。"""
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,8 +15,25 @@ plugin = _loader.load_package(
     "minimal_system_plugin", _loader.ROOT / "plugins" / "minimal-system"
 )
 rewrite = sys.modules["minimal_system_plugin.lib.rewrite"]
+prompt_file = sys.modules["minimal_system_plugin.lib.prompt_file"]
 
 TEXT = plugin.DEFAULT_SYSTEM_PROMPT
+
+#: 空目录当 HERMES_HOME，免得开发机上真实的 ``~/.hermes/SYSTEM.md`` 污染断言。
+_HOME_TMP = tempfile.TemporaryDirectory()
+_ORIGINAL_HOME = os.environ.get("HERMES_HOME")
+
+
+def setUpModule() -> None:
+    os.environ["HERMES_HOME"] = _HOME_TMP.name
+
+
+def tearDownModule() -> None:
+    if _ORIGINAL_HOME is None:
+        os.environ.pop("HERMES_HOME", None)
+    else:
+        os.environ["HERMES_HOME"] = _ORIGINAL_HOME
+    _HOME_TMP.cleanup()
 
 
 def chat_request(system: str = "long host prompt") -> dict:
@@ -153,6 +172,123 @@ class RegisterTests(unittest.TestCase):
         self.assertIsNone(hook(request="nope"))
         self.assertIsNone(hook())
         self.assertIsNone(hook(request={"messages": "not-a-list"}))
+
+
+
+class PromptFileTests(unittest.TestCase):
+    """``systemPromptFile``: md 原样发送、缺失回落、改文件即时生效。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.path = self.dir / "SYSTEM.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _hook(self, **config):
+        ctx = _loader.FakeCtx(dict(config))
+        plugin.register(ctx)
+        return ctx.middleware["llm_request"][0]
+
+    def _system(self, hook, request=None) -> str:
+        out = hook(request=request or chat_request(), api_mode="chat_completions")
+        self.assertIsInstance(out, dict)
+        return out["request"]["messages"][0]["content"]
+
+    def test_markdown_body_is_sent_verbatim(self):
+        body = "# 大肥鱼\n\n## 硬约束\n\n- 第一行\n- 第二行\n\n```text\n代码块照发\n```"
+        self.path.write_text(body + "\n", encoding="utf-8")
+        self.assertEqual(self._system(self._hook(systemPromptFile=str(self.path))), body)
+
+    def test_file_wins_over_inline_prompt(self):
+        self.path.write_text("from file", encoding="utf-8")
+        hook = self._hook(systemPromptFile=str(self.path), systemPrompt="from config")
+        self.assertEqual(self._system(hook), "from file")
+
+    def test_missing_file_falls_back_to_inline_prompt(self):
+        hook = self._hook(systemPromptFile=str(self.dir / "nope.md"), systemPrompt="from config")
+        self.assertEqual(self._system(hook), "from config")
+
+    def test_missing_file_without_inline_falls_back_to_default(self):
+        hook = self._hook(systemPromptFile=str(self.dir / "nope.md"), systemPrompt="")
+        self.assertEqual(self._system(hook), plugin.DEFAULT_SYSTEM_PROMPT)
+
+    def test_blank_file_falls_back_to_inline_prompt(self):
+        self.path.write_text(" \n\n", encoding="utf-8")
+        hook = self._hook(systemPromptFile=str(self.path), systemPrompt="from config")
+        self.assertEqual(self._system(hook), "from config")
+
+    def test_bom_is_stripped(self):
+        self.path.write_text("# BOM 头\n正文", encoding="utf-8-sig")
+        self.assertEqual(self._system(self._hook(systemPromptFile=str(self.path))), "# BOM 头\n正文")
+
+    def test_edit_is_picked_up_without_restart(self):
+        hook = self._hook(systemPromptFile=str(self.path))
+        self.path.write_text("version one", encoding="utf-8")
+        self.assertEqual(self._system(hook), "version one")
+        self.path.write_text("version two!", encoding="utf-8")  # 长度变化 → (mtime, size) 必变
+        self.assertEqual(self._system(hook), "version two!")
+
+    def test_relative_path_resolves_against_cwd(self):
+        self.path.write_text("relative", encoding="utf-8")
+        previous = os.getcwd()
+        os.chdir(self.dir)
+        try:
+            hook = self._hook(systemPromptFile="SYSTEM.md")
+            self.assertEqual(self._system(hook), "relative")
+        finally:
+            os.chdir(previous)
+
+    def test_blank_path_has_no_reader(self):
+        """空字符串本身没有含义了（``_load_config`` 会先换成默认路径），但底层不许炸。"""
+        self.assertEqual(prompt_file.resolve_path(""), "")
+        self.assertIsNone(prompt_file.PromptReader("").read())
+
+    def test_reader_never_raises_on_a_directory(self):
+        self.assertIsNone(prompt_file.PromptReader(str(self.dir)).read())
+
+
+class DefaultPathTests(unittest.TestCase):
+    """留空 ``systemPromptFile`` → ``$HERMES_HOME/SYSTEM.md``（Hermes 自己的目录，与 SOUL.md 同级）。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self._saved = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = str(self.home)
+
+    def tearDown(self) -> None:
+        if self._saved is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = self._saved
+        self.tmp.cleanup()
+
+    def _system(self, **config) -> str:
+        ctx = _loader.FakeCtx(dict(config))
+        plugin.register(ctx)
+        hook = ctx.middleware["llm_request"][0]
+        out = hook(request=chat_request(), api_mode="chat_completions")
+        self.assertIsInstance(out, dict)
+        return out["request"]["messages"][0]["content"]
+
+    def test_default_path_is_inside_the_hermes_home(self):
+        self.assertEqual(prompt_file.hermes_home(), str(self.home))
+        self.assertEqual(prompt_file.default_prompt_path(), str(self.home / "SYSTEM.md"))
+
+    def test_default_file_is_used_when_the_setting_is_empty(self):
+        (self.home / "SYSTEM.md").write_text("# 默认文件\n正文", encoding="utf-8")
+        self.assertEqual(self._system(systemPrompt="from config"), "# 默认文件\n正文")
+
+    def test_missing_default_file_falls_back_to_inline_prompt(self):
+        self.assertEqual(self._system(systemPrompt="from config"), "from config")
+
+    def test_explicit_path_still_wins_over_the_default(self):
+        other = self.home / "other.md"
+        other.write_text("explicit", encoding="utf-8")
+        (self.home / "SYSTEM.md").write_text("default file", encoding="utf-8")
+        self.assertEqual(self._system(systemPromptFile=str(other)), "explicit")
 
 
 if __name__ == "__main__":

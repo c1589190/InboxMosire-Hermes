@@ -22,6 +22,7 @@ INBOX_ID="${INBOX_ID:-main}"
 WAKE_MODE="${WAKE_MODE:-claim}"           # claim | view-ack
 WAKE_PROFILE="${WAKE_PROFILE:-generic}"   # generic | iibot
 PERSONA_FILE="${PERSONA_FILE:-}"
+SYSTEM_PROMPT_FILE="${SYSTEM_PROMPT_FILE:-}"
 TOKEN_PATH="${TOKEN_PATH:-$HERMES_HOME_DIR/inbox-mosire/api-token}"
 LOCAL_SRC=""
 ACTION="${1:-all}"
@@ -123,6 +124,13 @@ do_settings() {
   set_cfg "plugins.entries.minimal-system.settings.enabled" "true"
   set_cfg "plugins.entries.minimal-system.settings.systemPrompt" \
     "You are a helpful software engineer assistant."
+  if [ -n "$SYSTEM_PROMPT_FILE" ]; then
+    # 文件优先于上面那句常量；内容热更新（改文件不用重启），路径改了才要重启
+    set_cfg "plugins.entries.minimal-system.settings.systemPromptFile" "$SYSTEM_PROMPT_FILE"
+  else
+    warn "未提供 SYSTEM_PROMPT_FILE；system prompt 读 \$HERMES_HOME/SYSTEM.md，没有就回落上面那句常量。"
+    warn "  放别处时：$HERMES_BIN config set --force plugins.entries.minimal-system.settings.systemPromptFile /abs/path/SYSTEM.md"
+  fi
   # 关键开关：没有它，gateway 会话里的唤醒会被宿主拒绝（inject_message 返回 False）
   set_cfg "plugins.entries.inbox-wake.allow_gateway_injection" "true"
   ok "设置写入完成"

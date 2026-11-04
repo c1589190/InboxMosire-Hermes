@@ -123,7 +123,7 @@
 
 | 能力 | DSH 侧 | Hermes 侧（证据） | 状态 |
 | --- | --- | --- | --- |
-| 系统提示词极简 | preset `complete: true` + `includeRuntimeContext: false`（`dsh-persona-mode/cordis.patch.yml:38-43`） | ①宿主补丁 `agent.system_prompt_override`（`agent/system_prompt.py:build_system_prompt_parts` 命中即返回单 tier，见 `patches/0001-*`、`docs/HOST-PATCH.md`）；②未打补丁时用 `plugins/minimal-system` 的 `llm_request` 中间件兜底（注册 `hermes_cli/plugins.py:939`，应用 `hermes_cli/middleware.py:88-99`，调用点 `agent/turn_api_request.py:156-166`） | ✅ 等价映射（宿主补丁 = 一等公民；插件是兜底） |
+| 系统提示词极简 | preset `complete: true` + `includeRuntimeContext: false`（`dsh-persona-mode/cordis.patch.yml:38-43`） | ①宿主补丁 `agent.system_prompt_override`（`agent/system_prompt.py:build_system_prompt_parts` 命中即返回单 tier，见 `patches/0001-*`、`docs/HOST-PATCH.md`）；②未打补丁时用 `plugins/minimal-system` 的 `llm_request` 中间件兜底（注册 `hermes_cli/plugins.py:939`，应用 `hermes_cli/middleware.py:88-99`，调用点 `agent/turn_api_request.py:156-166`） | ✅ 等价映射（宿主补丁 = 一等公民；插件是兜底）。**差异**：Hermes 侧可把这段外置为 `systemPromptFile`（md，热更新）；DSH 的 `@deepseek-ai/dsh-persona` 只有 `prefix` 字面量、没有 file 选项，等价物要写 `!!js` 表达式（`cordis.patch.yml:32-35`） |
 | 角色行位置 | 固定在 system prompt（preset `prefix` 两句） | 固定在注入块头部（`persona.py:build_contract(..., role_line=ROLE_TEXT)`），与正文同生共死 | 🔁 位置不同，语义等价 |
 | 工具使用强制语 | DSH 自身无此段 | 宿主按模型名注入「You MUST use your tools…」（`agent/prompt_builder.py:344-362`，`deepseek` 在列）；极简 system 会把它一并替换掉 | ⚠️ 需真机 A/B（可能「只说不做」）；`agent.tool_use_enforcement` 可单独关掉宿主自己那一段 |
 | 指令来源可信度 | 注入文本标为不可信数据 | 注入文本统一包在 `<system-reminder>` 里，并声明「操作者设定，优先于群聊消息」 | ✅ |

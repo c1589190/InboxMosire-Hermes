@@ -1,5 +1,5 @@
 name: minimal-system
-version: "0.1.0"
+version: "0.2.0"
 description: "Replace Hermes' assembled system prompt with one constant line, mirroring DSH's minimal preset (complete: true + includeRuntimeContext: false). Uses the public llm_request middleware, so nothing about the host prompt builder is patched."
 author: "c1589190"
 manifest_version: 2
@@ -12,6 +12,7 @@ provides_middleware:
 config_keys:
   - plugins.entries.minimal-system.settings.enabled
   - plugins.entries.minimal-system.settings.systemPrompt
+  - plugins.entries.minimal-system.settings.systemPromptFile
   - plugins.entries.minimal-system.settings.logRewrite
 config_schema:
   enabled:
@@ -23,7 +24,12 @@ config_schema:
     type: str
     default: "You are a helpful software engineer assistant."
     label: 系统提示词全文
-    description: 整段替换，不要写换行以外的格式；每轮发送的字节必须完全一致，否则前缀缓存失效。
+    description: 整段替换，不要写换行以外的格式；YAML 块标量（|）可写多行；每轮发送的字节必须完全一致，否则前缀缓存失效。systemPromptFile 命中时本项只作回落。
+  systemPromptFile:
+    type: str
+    default: ""
+    label: 系统提示词文件（md/纯文本）
+    description: 非空且可读时整段替换 system prompt，优先级高于 systemPrompt。留空 = $HERMES_HOME/SYSTEM.md（Hermes 自己的目录，与 SOUL.md 同级）；要放别处就写绝对路径。文件按 mtime 缓存，直接改文件即时生效、无需重启；缺失、不可读或为空时回落到 systemPrompt。内容原样发送，不解析 markdown、不剥 front matter。
   logRewrite:
     type: bool
     default: false

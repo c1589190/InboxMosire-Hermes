@@ -5,6 +5,28 @@
 
 ## 未发布（HEAD）
 
+### minimal-system 0.2.0：系统提示词可外置为 md 文件（2026-11-04）
+
+- 版本：`plugins/minimal-system/plugin.yaml` 0.1.0 → 0.2.0
+- 需求（用户口径）：「人设扮演模式的 Agent 系统提示词应当是一个单独的完整 md 文件」。
+- 落法：新增设置 `plugins.entries.minimal-system.settings.systemPromptFile`。**留空 = `$HERMES_HOME/SYSTEM.md`**
+  （Hermes 自己的目录，与 `SOUL.md`/`config.yaml` 同级；`HERMES_HOME` 未设时用宿主 `hermes_cli/config.py`
+  的 `get_hermes_home()`，再不行 `~/.hermes`），要放别处再写绝对路径。
+  优先级 **文件 > `systemPrompt` 多行配置 > 内置常量**；文件按 `(mtime, size)` 缓存，改文件即时生效、
+  **不需要重启 gateway**（改路径才需要，配置只在插件加载时读一次）。
+- 文件按纯文本读（UTF-8-sig + `strip()`）后**原样发送**：markdown 标题/列表/代码块照发，不解析、不渲染、
+  不剥 front matter。缺失 / 不可读 / 空文件 → 静默回落到 `systemPrompt`，任何 I/O 问题都不会让一轮请求失败。
+- 同时修掉一处陈旧状态：`systemPrompt` 原来「非空才覆盖」，同一进程里重新 register 会继承上一次的值；
+  现在每次加载都重新推导（`plugins/minimal-system/__init__.py` 的 `_load_config`）。
+- `scripts/install.sh settings` 增加 `SYSTEM_PROMPT_FILE` 环境变量透传（写法同 `PERSONA_FILE`），
+  `docs/INSTALL.md` 的 env 列表与 YAML 样例同步。
+- 新文件：`plugins/minimal-system/lib/prompt_file.py`（`resolve_path` + `PromptReader`，读取语义与
+  `plugins/persona-mode/lib/persona.py` 的 `PersonaReader` 保持一致）。
+- 测试：`tests/test_minimal_system.py` 15 → 25 例（新增 `PromptFileTests` 10 例：原样发送、文件优先、
+  缺失/空文件回落、BOM 剥离、改文件热更新、相对路径按 cwd 解析、空设置、目录当文件）。全仓 164 → 174 例通过。
+- NOT_RUN：真机 gateway 重启后的出站字节对照；启用 `systemPromptFile` 后 `hermes plugins doctor
+  minimal-system` 的实际输出。
+
 ### inbox-wake 0.2.4：token 轮换自愈（2026-11-03）
 
 - 版本：`plugins/inbox-wake/plugin.yaml` 0.2.3 → 0.2.4（本条目对应 tag `v0.2.5`）

@@ -99,6 +99,11 @@ Hermes 的 system prompt 由 `agent/system_prompt.py:738` 分三层拼装（身�
 | 配置瘦身 | `config.yaml` 的 `agent.*` 开关（`stall_guards` / `task_completion_guidance` / `parallel_tool_call_guidance` / `environment_probe` / `bot_mode_protocol` / `tool_use_enforcement` / `execution_guidance`，见 `agent/agent_init.py:1284-1310`）、`skip_context_files`、`skip_memory` | 逐段关，宿主升级加的新段还会回来 |
 | 整段替换 | `plugins/minimal-system` 的 `llm_request` 中间件（出站最后一步，`agent/turn_api_request.py:156-166`） | 一劳永逸，但工具指引也没了 → 可能「只说不做」 |
 
+整段替换的**内容来源**有三档（`plugins/minimal-system/__init__.py:_prompt_text`）：操作者的文件
+`systemPromptFile`（md/纯文本，留空默认 `$HERMES_HOME/SYSTEM.md`，按 mtime 缓存、改文件即时生效）>
+`systemPrompt` 配置项（YAML 块标量可写
+多行）> 内置常量。文件缺失/空 → 落到下一档，所以「文件没了」不会把宿主的整段 prompt 放出来。
+
 默认两者都用不上：`minimal-system` 需要操作者在 `plugins.enabled` 里点名。角色行固定在注入里，
 所以「极简 system + 完整人设」与「完整 system + 人设」只差一个开关
 （`agent.system_prompt_override` 或 `minimal-system.enabled`），不需要改代码。

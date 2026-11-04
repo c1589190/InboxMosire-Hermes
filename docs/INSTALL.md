@@ -31,8 +31,16 @@ cd InboxMosire-Hermes
 | 写设置 | `./scripts/install.sh settings` | 全部走 `hermes config set --force`，不手改 YAML |
 | 体检 | `./scripts/install.sh check` | `plugins list` + `plugins doctor --ci` + `healthz` |
 
+`systemPromptFile` 指向操作者自己的 md/纯文本文件：**留空就是 `$HERMES_HOME/SYSTEM.md`**
+（Hermes 自己的目录，与 `SOUL.md`、`config.yaml` 同级），要放别处再写绝对路径。按 `(mtime, size)` 缓存，
+**改文件即时生效、不用重启 gateway**（改路径才需要重启，配置只在插件加载时读一次）。文件缺失、
+不可读或为空时静默回落到 `systemPrompt`。内容原样发送——不解析 markdown、不渲染、不剥 front matter，
+所以别写时间戳之类每轮都会变的东西（每轮字节必须一致，否则前缀缓存失效）。
+
 环境变量覆盖：`INBOX_API_URL`（默认 `http://127.0.0.1:18765`）、`INBOX_ID`（`main`）、
-`WAKE_MODE`（`claim`）、`WAKE_PROFILE`（`generic`）、`PERSONA_FILE`、`TOKEN_PATH`、`HERMES_BIN`。
+`WAKE_MODE`（`claim`）、`WAKE_PROFILE`（`generic`）、`PERSONA_FILE`、`SYSTEM_PROMPT_FILE`（写入
+`minimal-system.systemPromptFile`，不写则读 `$HERMES_HOME/SYSTEM.md`、再不行用一句常量）、
+`TOKEN_PATH`、`HERMES_BIN`。
 
 ## 2. 脚本写进 config.yaml 的东西
 
@@ -42,10 +50,12 @@ agent:
 plugins:
   enabled: [persona-mode, inbox-wake, minimal-system]  # 插件默认不加载，必须点名；persona-mode 依赖 minimal-system
   entries:
-    minimal-system:                           # 必需同伴：把整段 system prompt 换成一句
+    minimal-system:                           # 必需同伴：把整段 system prompt 换成一句（或一个 md 文件）
       settings:
         enabled: true
-        systemPrompt: "You are a helpful software engineer assistant."
+        systemPromptFile: ""                    # 留空 = $HERMES_HOME/SYSTEM.md；要放别处写绝对路径
+                                                # 文件可读时整段替换，优先级高于 systemPrompt
+        systemPrompt: "You are a helpful software engineer assistant."  # 回落值；YAML 块标量（|）可写多行
     persona-mode:
       settings:
         enabled: true

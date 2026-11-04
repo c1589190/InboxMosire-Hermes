@@ -62,7 +62,7 @@ cp kit.env.example kit.env        # 改 jar 路径 / 数据目录 / 端口
 | 组件 | 作用 | 依赖宿主面 |
 |---|---|---|
 | `plugins/persona-mode` | **角色扮演模式**：两句角色行 + `PERSONA.md` 正文合成一条 user 注入、按 hash 去重、压缩后重锚、缺文件时封禁外发 | `pre_llm_call` / `post_compaction` / `pre_tool_call` |
-| `plugins/minimal-system` | persona-mode 的**必需同伴**：把出站请求的整段 system prompt 换成一句常量（默认 `You are a helpful software engineer assistant.`）。用 `requires_plugins` 声明依赖，缺了会告警 | `register_middleware("llm_request")`；宿主打过 `patches/0001-…` 时由 `agent.system_prompt_override` 直接生效，中间件自动变成 no-op |
+| `plugins/minimal-system` | persona-mode 的**必需同伴**：把出站请求的整段 system prompt 换成一句常量（默认 `You are a helpful software engineer assistant.`）或操作者自己的 md 文件（`systemPromptFile`，留空 = `$HERMES_HOME/SYSTEM.md`，改文件即时生效）。用 `requires_plugins` 声明依赖，缺了会告警 | `register_middleware("llm_request")`；宿主打过 `patches/0001-…` 时由 `agent.system_prompt_override` 直接生效，中间件自动变成 no-op |
 | `plugins/inbox-wake` | 每 session 独立 binding、SSE 订阅 + 对账轮询、有界摘要唤醒、4 个工具 + `/inbox` 命令 | `inject_message` / `register_tool` / `register_command` / `post_tool_call` / `pre_llm_call` |
 | `kit/` | 一键发行包：`kit.sh`（doctor/up/status/down/probe/token）+ `kit.env.example` + `引导.md` | 只用宿主 CLI 与 InboxMosire jar |
 
