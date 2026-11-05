@@ -26,6 +26,14 @@ SYSTEM_PROMPT_FILE="${SYSTEM_PROMPT_FILE:-}"
 TOKEN_PATH="${TOKEN_PATH:-$HERMES_HOME_DIR/inbox-mosire/api-token}"
 LOCAL_SRC=""
 ACTION="${1:-all}"
+# 2026-11-06（D-009）起取消人设注入：默认只装 inbox-wake + minimal-system。
+# 仍要 old school persona 注入的，显式 WITH_PERSONA=1 跑本脚本。
+WITH_PERSONA="${WITH_PERSONA:-0}"
+if [ "$WITH_PERSONA" = "1" ]; then
+  PLUGIN_IDS=(persona-mode inbox-wake minimal-system)
+else
+  PLUGIN_IDS=(inbox-wake minimal-system)
+fi
 
 log()  { printf '\033[36m›\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
@@ -48,20 +56,20 @@ wait_gateway_stopped() {
 do_plugins() {
   need_hermes
   if [ -n "$LOCAL_SRC" ]; then
-    [ -d "$LOCAL_SRC/plugins/persona-mode" ] || die "本地路径里没有 plugins/persona-mode: $LOCAL_SRC"
+    [ -d "$LOCAL_SRC/plugins/inbox-wake" ] || die "本地路径里没有 plugins/inbox-wake: $LOCAL_SRC"
     mkdir -p "$HERMES_HOME_DIR/plugins"
-    for id in persona-mode inbox-wake minimal-system; do
+    for id in "${PLUGIN_IDS[@]}"; do
       log "复制 $id → $HERMES_HOME_DIR/plugins/$id"
       rm -rf "$HERMES_HOME_DIR/plugins/$id"
       cp -a "$LOCAL_SRC/plugins/$id" "$HERMES_HOME_DIR/plugins/$id"
       find "$HERMES_HOME_DIR/plugins/$id" -name '__pycache__' -type d -prune -exec rm -rf {} +
     done
-    for id in persona-mode inbox-wake minimal-system; do
+    for id in "${PLUGIN_IDS[@]}"; do
       log "启用 $id"
       "$HERMES_BIN" plugins enable "$id" || warn "启用 $id 失败，稍后手动执行: $HERMES_BIN plugins enable $id"
     done
   else
-    for id in persona-mode inbox-wake minimal-system; do
+    for id in "${PLUGIN_IDS[@]}"; do
       log "从 $REPO_SLUG#plugins/$id 安装并启用"
       "$HERMES_BIN" plugins install "$REPO_SLUG#plugins/$id" --enable \
         || die "安装 $id 失败。若被安装期安全扫描拦下，先看提示；确认无误后可加 --force 重试"
@@ -104,13 +112,18 @@ set_cfg() {
 
 do_settings() {
   need_hermes
-  log "写入 persona-mode 设置"
+  if [ "$WITH_PERSONA" = "1" ]; then
+  log "写入 persona-mode 设置（WITH_PERSONA=1）"
   set_cfg "plugins.entries.persona-mode.settings.enabled" "true"
   if [ -n "$PERSONA_FILE" ]; then
     set_cfg "plugins.entries.persona-mode.settings.personaFile" "$PERSONA_FILE"
   else
     warn "未提供 PERSONA_FILE；插件默认读当前会话工作目录下的 PERSONA.md。如需固定路径："
     warn "  $HERMES_BIN config set --force plugins.entries.persona-mode.settings.personaFile /abs/path/PERSONA.md"
+  fi
+  else
+    log "跳过 persona-mode（D-009：人设改由首条 inbox 注入引导读 AGENTS.md / PERSONA.md）"
+    set_cfg "plugins.entries.persona-mode.settings.enabled" "false"
   fi
 
   log "写入 inbox-wake 设置"
@@ -131,6 +144,10 @@ do_settings() {
     warn "未提供 SYSTEM_PROMPT_FILE；system prompt 读 \$HERMES_HOME/SYSTEM.md，没有就回落上面那句常量。"
     warn "  放别处时：$HERMES_BIN config set --force plugins.entries.minimal-system.settings.systemPromptFile /abs/path/SYSTEM.md"
   fi
+  log "写入推送模式设置（0.3.0 起）"
+  set_cfg "plugins.entries.inbox-wake.settings.pushMode" "auto"
+  set_cfg "plugins.entries.inbox-wake.settings.pushGraceMs" "2000"
+  set_cfg "plugins.entries.inbox-wake.settings.firstRunGuide" "true"
   # 关键开关：没有它，gateway 会话里的唤醒会被宿主拒绝（inject_message 返回 False）
   set_cfg "plugins.entries.inbox-wake.allow_gateway_injection" "true"
   ok "设置写入完成"
@@ -141,7 +158,7 @@ do_check() {
   need_hermes
   log "插件清单"; "$HERMES_BIN" plugins list --user --plain || true
   log "运行时契约校验（doctor）"
-  for id in persona-mode inbox-wake minimal-system; do
+  for id in "${PLUGIN_IDS[@]}"; do
     "$HERMES_BIN" plugins doctor "$id" --ci || warn "$id doctor 报了问题，见上面的输出"
   done
   log "InboxMosire 连通性"
@@ -159,7 +176,7 @@ do_check() {
        hermes mcp add inbox-mosire --url http://127.0.0.1:18766/mcp --auth header
        hermes mcp test inbox-mosire
   2. 重启 gateway，让插件与设置生效：
-       hermes gateway restart        # 或结束旧进程后 hermes gateway run
+       hermes gateway stop && hermes gateway start   # 没有 restart 子命令
 
 会话内可用命令：
   /inbox status | bind <descriptor.json|inboxId> [channels] | unbind | retry | log

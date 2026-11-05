@@ -226,6 +226,37 @@ rm -rf ~/.hermes/inbox-mosire/api-token        # 不再需要 adapter 时
 
 卸载后记得从 `plugins.enabled` 里去掉两个 id，并重启 gateway。
 
+## 升级到新版本（一键）
+
+两种路径，按当初的安装方式选：
+
+**A. 宿主原生（只对 provenance 有效的插件）**
+
+```bash
+hermes plugins update inbox-wake          # 单插件
+hermes plugins update --yes               # 全部已装插件
+```
+
+只有当插件是 `hermes plugins install <repo>#plugins/inbox-wake --ref <tag>` 装进来的、宿主有 provenance 记录时才可用；早期用 `cp -a` / `sync-plugins.sh` 复制进去的会报找不到来源。
+
+**B. 仓内脚本（对复制安装同样有效，推荐）**
+
+```bash
+./scripts/upgrade.sh --dry-run            # 先看会改什么
+./scripts/upgrade.sh                      # 默认升级到 Alpha20261106，自动重启 gateway
+./scripts/upgrade.sh --latest             # 取远端最新 v* tag
+./scripts/upgrade.sh --ref v0.3.0         # 指定任意 tag / 分支 / 提交
+./scripts/upgrade.sh --no-restart         # 只换文件，不重启
+./scripts/upgrade.sh --target /home/ops/.hermes
+./scripts/upgrade.sh --rollback           # 回到最近一次备份并重启
+```
+
+它做的事：按 ref 从 git 取干净副本（`git archive`，不经过工作区）→ 备份到 `$HERMES_HOME/plugins/.backups/<id>-<时间戳>` → 整目录替换并清 `__pycache__` → `python3 -m compileall` 语法自检（失败就提示回滚）→ 缺则补 `pushMode/pushGraceMs/firstRunGuide` 三个配置键 → `hermes gateway stop && sleep 2 && hermes gateway start` → 打印版本、备份目录与核对提示。
+
+不碰 `config.yaml` 里已有的值、不碰 plugin-data、不碰 token。
+
+升级后核对日志：应看到 `push.ok` / `push.ack` / `guide.sent`，**不应**再看到 `wake.ok`（那是 changed 路径；只有 `pushMode: off` 时才该出现）。
+
 ## 推送模式（0.3.0 起）
 
 服务端能推 `inbox.push` 时，插件优先走推送；`changed` 只用来刷水位，不再整窗重投。

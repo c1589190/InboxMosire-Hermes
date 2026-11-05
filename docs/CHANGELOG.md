@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 0.3.1 (2026-11-06)
+
+- 新增 `scripts/upgrade.sh`：一键升级（`--ref/--latest/--dry-run/--no-restart/--rollback/--target`），
+  按 git ref 取干净副本整目录替换、备份、语法自检、补配置键、重启 gateway。
+- `scripts/install.sh` 跟随 D-009：默认只装 `inbox-wake` + `minimal-system`，persona 需 `WITH_PERSONA=1`；
+  新增 `pushMode/pushGraceMs/firstRunGuide` 三个设置项；去掉不存在的 `hermes gateway restart` 提示。
+- `docs/INSTALL.md` 增「升级到新版本（一键）」章。
+
+
 按主题归纳，不追每个小修。日期均为本机真机轮次（2026-11-02）。
 宿主环境：Hermes `v0.22.5+3377.g0aab6dc`（2026.9.24）/ Python 3.14.9 / 模型 `deepseek-flash`。
 
