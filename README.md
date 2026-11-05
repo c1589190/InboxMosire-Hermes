@@ -63,7 +63,7 @@ cp kit.env.example kit.env        # 改 jar 路径 / 数据目录 / 端口
 |---|---|---|
 | `plugins/persona-mode` | **角色扮演模式**：两句角色行 + `PERSONA.md` 正文合成一条 user 注入、按 hash 去重、压缩后重锚、缺文件时封禁外发 | `pre_llm_call` / `post_compaction` / `pre_tool_call` |
 | `plugins/minimal-system` | persona-mode 的**必需同伴**：把出站请求的整段 system prompt 换成一句常量（默认 `You are a helpful software engineer assistant.`）或操作者自己的 md 文件（`systemPromptFile`，留空 = `$HERMES_HOME/SYSTEM.md`，改文件即时生效）。用 `requires_plugins` 声明依赖，缺了会告警 | `register_middleware("llm_request")`；宿主打过 `patches/0001-…` 时由 `agent.system_prompt_override` 直接生效，中间件自动变成 no-op |
-| `plugins/inbox-wake` | 每 session 独立 binding、SSE 订阅 + 对账轮询、有界摘要唤醒、4 个工具 + `/inbox` 命令 | `inject_message` / `register_tool` / `register_command` / `post_tool_call` / `pre_llm_call` |
+| `plugins/inbox-wake` | 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令 | `inject_message` / `register_tool` / `register_command` / `post_tool_call` / `pre_llm_call` |
 | `kit/` | 一键发行包：`kit.sh`（doctor/up/status/down/probe/token）+ `kit.env.example` + `引导.md` | 只用宿主 CLI 与 InboxMosire jar |
 
 ---
@@ -75,22 +75,37 @@ iiBot / 后端写入
       │
       ▼
 InboxMosire inboxd ──18765 API / 18766 MCP（可选）
-      │  ① SSE `inbox.updated`（后端不发心跳时用 pollSeconds 对账兜底）
+      │  ① SSE `inbox.push`（服务端渲染好的整段正文）/ `inbox.changed`（只带计数，pollSeconds 兜底）
       ▼
-Hermes gateway（常驻；inbox-wake 的线程 + 6 个 hook + 4 个工具 + /inbox 都在这个进程里）
-      │  ② 注入 `[INBOX_HOST_EVENT] inbox=… revision=… available=…`
+Hermes gateway（常驻；inbox-wake 的线程 + 7 个 hook + 4 个工具 + /inbox 都在这个进程里）
+      │  ② push：把 data.text **原样**注入（不加 header）→ 立即 POST …/deliveries/{id}/ack
+      │     changed：注入 `[INBOX_HOST_EVENT] inbox=… revision=… available=…`
       ▼
 会话跑一轮：先 inbox_list 看摘要 → inbox_claim 领取 → 干活 → inbox_complete
-      │  （这 12 个工具来自 mcp_servers 挂的 InboxMosire MCP）
+      │  （这 13 个工具来自 mcp_servers 挂的 InboxMosire MCP；ack 由插件回，
+      │     Agent 侧还有 inbox_ack 可手动补）
       ▼
 CLI / TUI 只是客户端，看到的是这一轮的输出
 ```
+
+**`inbox.push` 路径（W5-1/W5-2，主路径）**
+
+1. 事件到达 → 解析 CloudEvents 信封里的 `data`，正文就是 `data.text`（**逐字**，多行/缩进/结尾换行都不动）
+2. 按 `deliveryId` 去重（水位落在 `ctx.state` 的 `pushes` 键，重启后仍生效）
+3. 注入 `inject_message(text, session_key=…)`（角色 `user`）；有本地绝对路径附件时带 `media_urls`，
+   远端 URL 只记日志不下载
+4. 注入成功立即 ack：优先程序 MCP 的 `inbox_ack`，否则 `POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`
+   （最多重试一次；失败只 warning，**绝不**因此重投）
+5. 注入失败则不 ack，条目留在板上等下一次事件
+
+**`inbox.changed` 路径（兼容旧事件）**
 
 1. 事件到达 → 读 status 拿 `revision` / `available`
 2. `available <= 0` → 不唤醒，只推进游标
 3. `revision <= lastWokenRevision` → 去重
 4. 退避未到期 / turn 正在跑 → 存 pending，稍后补投
-5. 组文本：header + 固定指令 + 有界摘要（≤3 条，标题 ≤80）+ 可选正文段
+5. 组文本：header + 固定指令 + 有界摘要（≤3 条，标题 ≤80）+ 可选正文段；
+   push 已经注入过的 `itemIds` 按 `skip_item_ids` 从摘要与正文段里剔除
 6. `inject_message(...)` → 宿主按「CLI 队列 → TUI 宿主 → messaging gateway」路由
 7. 成功记 `wake.ok`；宿主明确拒绝时按宿主类型分别记 `wake.deferred` / `wake.failed`
 
@@ -135,6 +150,10 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 | `sseReadTimeoutSeconds` | = `heartbeatTimeoutSeconds`（45） | SSE 自己的读超时，别跟 `requestTimeoutMs` 混用 |
 | `maxBindingsPerInbox` | `1` | 同一 inbox 只保留 1 条活跃绑定，其余降级 `passive`；防止一次性会话留下僵尸绑定（一事件叫醒 N 个会话） |
 | `wakeRetrySeconds` | `15` | 本地会话被宿主拒收时的固定重试间隔，不进指数退避 |
+| `pushMode` | `auto` | 投递通道：`on` = 只信服务端 `inbox.push`（`inbox.changed` 仅刷水位，推荐；本工作区已设 `on`）；`off` = 只用 `changed`（旧服务端）；`auto` = 见到第一帧 push 前用 `changed` + `pushGraceMs` 宽限 |
+| `pushGraceMs` | `2000` | `auto` 模式下 `changed` 唤醒的宽限期（0..30000 ms）：push 若先到就把这次唤醒撤掉，避免同一批消息注入两次 |
+| `firstRunGuide` | `true` | 每个会话首次注入前先发一条极短说明，引导 Agent 自己去读工作区的 `AGENTS.md` / `PERSONA.md`（D-009：人设不再由宿主注入） |
+| `firstRunGuideText` | `""` | 覆盖上面那条说明的文案；空 = 用内置默认 |
 | `allow_gateway_injection`（`plugins.entries.inbox-wake.`） | — | 宿主侧授权，**必须显式 `true`** |
 
 另外 Hermes **没有** `register_mcp_server`，业务 MCP 只能写配置：

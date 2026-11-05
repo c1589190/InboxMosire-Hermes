@@ -239,6 +239,25 @@ Hermes 没有该开关，改用公开的 `llm_request` 中间件整段替换（`
 | O7 | `scripts/patch-hermes.sh check` 返回 0（已应用）且 `revert` 可撤销；宿主升级后重跑 `apply` | ✅ 本机 |
 | O8 | 真机：`deepseek-flash` 在极简 system 下仍会调工具（**风险项**：`agent/prompt_builder.py:362` 把 `deepseek` 列入 `TOOL_USE_ENFORCEMENT_MODELS`，宿主的 "You MUST use your tools…" 会一并被替换掉） | 🔒 未验证 |
 
+## P. `inbox.push` 直投 + ack（W5-1/W5-2，2026-11-06 新增）
+
+背景：InboxMosire 服务端改为把条目渲染成整段正文推 `inbox.push`（`io.mosire.inbox.push.v1`），
+Agent 只看这一段 String（用户裁定 D-002/D-015）；旧 `inbox.changed` 仍要兼容。
+
+| # | 检查 | 状态 |
+| --- | --- | --- |
+| P1 | 事件识别吃两种形状：SSE 事件名 `inbox.push`、CloudEvents 信封 `data.type==io.mosire.inbox.push.v1`、扁平 `data` 含 `deliveryId`+`text` | ✅ 单测 `ParseTests` |
+| P2 | 注入文本与 `data.text` **逐字一致**（多行、缩进、结尾换行都不变；无 header/摘要/格式） | ✅ 单测 `test_push_injects_text_verbatim` |
+| P3 | 同一 `deliveryId` 只注入一次，水位持久化（新 manager 同 `ctx.state` 仍去重） | ✅ 单测 `test_same_delivery_injected_once` / `test_dedupe_survives_restart` |
+| P4 | 注入成功后立即 ack：`POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`（`InboxClient.ack_delivery`，body `{}`）；MCP `inbox_ack` 装上时优先 | ✅ 单测 `test_ack_called_with_path_arguments` / `test_client_ack_hits_the_documented_route` / `test_mcp_ack_is_preferred_when_installed` |
+| P5 | ack 失败只 warning（4xx 不重试、5xx 重试一次），**不重复注入** | ✅ 单测 `AckHelperTests` / `test_ack_failure_does_not_reinject` |
+| P6 | 注入失败不 ack，下一次事件重投 | ✅ 单测 `test_injection_failure_keeps_delivery_unacked` |
+| P7 | 附件：空 `attachments` 时注入调用签名不变（不传 `media_urls`）；本地绝对路径转 `media_urls`；远端 URL 只记日志不下载；宿主不认 `media_urls` 时降级为纯文本并 warning 一次 | ✅ 单测 `AttachmentTests` |
+| P8 | `inbox.changed` 旧路径仍唤醒；push 已注入的 `itemIds` 在 changed 渲染时被 `skip_item_ids` 剔除 | ✅ 单测 `ChangedPathTests` |
+| P9 | 跨板投递（`data.inbox` 与 binding 的 `inboxId` 不同）不注入、不 ack | ✅ 单测 `test_foreign_inbox_delivery_is_skipped` |
+| P10 | 真机：真实 inboxd 推一条 → Agent 收到逐字正文 → ack 生效（条目关闭、remaining 减少） | 🔒 未验证 |
+| P11 | 真机：带本地图片附件的 push 在 `hermes --tui` / gateway 会话里确实带上附件 | 🔒 未验证 |
+
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 
 ### Z.1 环境与安装

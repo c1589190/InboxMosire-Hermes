@@ -82,6 +82,9 @@ class Base(unittest.TestCase):
         self.ctx = _loader.FakeCtx()
         self.store = state_mod.Store(self.ctx)
         self.config = config_mod.Config.from_mapping({})
+        # 首条工作区说明（D-009）单独在 test_inbox_push.GuideTests 里测；
+        # 这里只关心唤醒本身，关掉免得每次唤醒多注入一条。
+        self.config.first_run_guide = False
         self.manager = binding_mod.BindingManager(
             self.config, self.store, self._inject, clock=lambda: self.now
         )

@@ -10,7 +10,8 @@ Hermes 进程
 └── inbox-wake 插件
     ├── BindingManager       每个 session_key 一条 binding（状态机 + 去重水位）
     ├── SseWorker            每 binding 一个线程：GET /events（带 Last-Event-ID）
-    ├── WakeDecider          只在 idle + 去抖 + 退避允许 + revision 未唤醒过时注入
+    ├── WakeDecider          只在 idle + 去抖 + 退避允许 + revision 未唤醒过时注入（changed 路径）
+    ├── PushRouter           `inbox.push` → 正文原样注入 + 立即 ack（不走 revision 判定）
     ├── 工具面               inbox_adapter_status|bind|unbind|log
     └── /inbox 命令          status|bind|unbind|retry|help
 
@@ -219,6 +220,37 @@ inbox=desk revision=42 available=3 channels=[channel-a,channel-b]
 消息身份（幂等）：`key = inbox:<inboxId>:revision:<n>:session:<session_key>`，
 `id = msg_inbox_<sha256(key)[0:24]>`；`ctx.inject_message` 没有幂等键，
 所以去重完全依赖持久化水位（`lastWake.key` / `lastWokenRevision` / `pendingWake`）。
+
+### 4.3a `inbox.push` 直投路径（W5-1/W5-2，2026-11-06）
+
+InboxMosire 把所有条目渲染成一整段正文后推 `inbox.push`（CloudEvents type
+`io.mosire.inbox.push.v1`），插件这边**不做任何二次排版**：
+
+- 事件识别：`push.is_push(event)` 三选一——SSE 事件名 `inbox.push`、信封 `data.type` 等于
+  `io.mosire.inbox.push.v1`、或扁平 `data` 里同时有 `deliveryId` + `text`。
+  `push.unwrap_payload()` 把 CloudEvents 信封里的内层 `data` 剥出来（信封与扁平两种形状都吃）。
+- 正文：`data.text` **逐字**注入（多行、缩进、结尾换行都不动；不做 `clean_block`、不截断），
+  不加 header、不加摘要、不加自己的格式——这是用户裁定（D-002/D-015）：Agent 只看到服务端
+  渲染好的那一段 String。`important` 只写进 `lastPush` 与 ops log，不改变文本。
+- 注入入口：与唤醒路径同一个 `inject`（宿主 `ctx.inject_message`，角色 `user`），
+  见 `plugins/inbox-wake/__init__.py` 的 `_make_inject()`；没有附件时保持旧的两参数调用。
+- 附件：`push.local_media()` 只放行**本地绝对路径且存在**的文件（转成 `media_urls` 关键字参数传下去）；
+  远端 URL / 相对路径 / 不存在的路径一律记日志跳过，**不下载**。宿主 `inject_message` 不认
+  `media_urls` 时（`TypeError`）降级为纯文本，只 warning 一次。
+- 去重：`deliveryId` 水位持久化在 `ctx.state` 的 `pushes` 键（`{"<sessionKey>": {"inboxId",
+  "deliveryIds"[:200], "itemIds"[:500]}}`），进程重启后仍生效；同一 `deliveryId` 只注入一次。
+- ack：注入成功**立即** ack（先 `self.mcp_ack`（程序 MCP `inbox_ack`，若外部装上了），否则
+  `InboxClient.ack_delivery()` → `POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`）。
+  `push.ack_delivery()` 只对传输错误 / 5xx / 429 重试一次，4xx 立刻放弃；`acked:false`（重复 ack）
+  视为成功。ack 失败只 warning + `push.ack.failed`，**绝不**因此重复注入。
+  注入失败则**不 ack**（条目必须留在板上），下一次事件还会再投。
+- turn 正在跑时把 envelope 存进 `Runtime.pending_pushes`，本轮结束（`on_turn_end`）再投。
+- 与 changed 路径的隔离：push 注入过的 `itemIds` 通过 `template.build_wake(..., skip_item_ids=…)`
+  从摘要行与正文段里剔除，同一批消息只出现一次。
+
+**只读条款的登记例外**：ack 是本插件唯一一次 items 写操作（`AGENTS.md` 红线 4 的例外，
+2026-11-06 用户裁定）。它不 claim、不 renew、不 complete 任何条目，只把「这条投递已经送到 Agent」
+这一事实回给服务端。
 
 ### 4.4 idle 判定（Hermes 侧降级）
 

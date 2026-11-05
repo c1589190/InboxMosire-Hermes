@@ -108,6 +108,10 @@ start_failed, stopped, rest}`。
 | `maxBindingsPerInbox` | int | `1` | 同一个 `(apiBaseUrl, inboxId)` 只保留这么多**活跃**绑定；多余的降级成 `passive`（不订阅、不唤醒，`/inbox log` 里是 `binding.passive`）。防止每次一次性会话 autoBind 出一条僵尸绑定，导致一个事件叫醒 N 个会话 |
 | `wakeRetrySeconds` | int | `15` | 本地会话（`agent:*:local:*`）被宿主拒收时的**固定**重试间隔（5–300）。它不进 `wakeBackoffBaseMs` 阶梯：本地会话只在 turn 运行中是 live session，空闲被拒不代表条目有问题 |
 | `pollSeconds` | int | `0` | 对账轮询：每隔 N 秒 `GET /status` 比 revision 并走同一条唤醒决策（`reason=poll`）。`0`=关闭。后端 `/events` 不发 `: ping` 心跳时设 30–60，唤醒正确性就不再依赖 SSE |
+| `pushMode` | str | `auto` | `on`/`off`/`auto`。`on` 时 `inbox.changed` 只刷新水位，一切投递走 `inbox.push`（D-017）；`off` 时忽略 push 帧，退回 changed 语义 |
+| `pushGraceMs` | int | `2000` | `auto` 模式下 changed 唤醒的宽限，push 到达即撤销，防重复注入 |
+| `firstRunGuide` | bool | `true` | 每个会话第一次注入前，先单独注入一条极短的工作区说明，让 Agent 自己去读 `AGENTS.md`/`PERSONA.md`（D-009；关闭人设注入后的替代） |
+| `firstRunGuideText` | str | `""` | 覆盖上述说明的文案（≤2000 字符），空 = 内置默认 |
 | `requestTimeoutMs` | int | `10000` | 单次 HTTP |
 | `maxBindings` | int | `8` | 进程内绑定上限 |
 
@@ -126,6 +130,17 @@ start_failed, stopped, rest}`。
 | `outboundGuard` | bool | `true` | 缺文件时拦截外发工具 |
 | `outboundTools` | list | `["qq_conversation_send", "conversation_send"]` | 按**后缀**匹配 |
 | `denyTools` | list | `[]` | 可选的工具收窄（等价 DSH 的 Minimal 组） |
+
+## 3a. 事件与注入形态
+
+| SSE 事件 | 插件动作 | 注入的文本 |
+|---|---|---|
+| `inbox.push`（`io.mosire.inbox.push.v1`） | 按 `deliveryId` 去重 → 注入 → 立即 ack（`inbox_ack` 或 `POST /deliveries/{id}/ack`） | `data.text` **逐字**（多行原样），无 header、无摘要、无格式 |
+| `inbox.changed`（`io.mosire.inbox.changed.v1`） | 读 status → 去抖/退避/revision 判定 → 注入 | `[INBOX_HOST_EVENT] inbox=… revision=… available=… channels=[…]` + 摘要/正文段（跳过 push 已注入的 `itemIds`） |
+
+push 路径的 ops log 事件：`push.ok` / `push.failed` / `push.duplicate` / `push.defer` /
+`push.skipped` / `push.invalid` / `push.attachment.skipped` / `push.ack` / `push.ack.failed` /
+`push.ack.mcp-fallback`；`status` 里另有 `lastPush` 与 `lastAck`（都不含正文与 token）。
 
 ## 4. 固定指令文本（唤醒尾部）
 

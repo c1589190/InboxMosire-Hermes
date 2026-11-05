@@ -57,11 +57,34 @@ def _host_inject_capability(ctx: Any) -> str:
 
 
 def _make_inject(ctx: Any):
-    """``inject(content, session_key) -> (ok, error)`` around the host's gateway injection."""
+    """``inject(content, session_key, media_urls=None) -> (ok, error)`` around the host injector.
 
-    def _inject(content: str, session_key: str) -> tuple[bool, str]:
+    ``media_urls`` 只在 ``inbox.push`` 带来**本地绝对路径**附件时才传（宿主
+    ``hermes_cli/plugins.py:588 inject_message(..., media_urls=..., media_types=...)`` 自己校验
+    「绝对路径 + 存在」，不为 None 时也不下载远端 URL）。主机版本更旧、不接受这个关键字时降级为
+    纯文本注入并只 warning 一次——唤醒/投递本身不能因为附件而失败。
+    """
+    warned_media = False
+
+    def _inject(
+        content: str, session_key: str, media_urls: Optional[list[str]] = None
+    ) -> tuple[bool, str]:
+        nonlocal warned_media
+        kwargs: dict[str, Any] = {"session_key": session_key}
+        if media_urls:
+            kwargs["media_urls"] = list(media_urls)
         try:
-            accepted = bool(ctx.inject_message(content, session_key=session_key))
+            accepted = bool(ctx.inject_message(content, **kwargs))
+        except TypeError as exc:
+            if not media_urls:
+                return False, f"{type(exc).__name__}: {exc}"
+            if not warned_media:
+                warned_media = True
+                logger.warning(
+                    "inbox-wake: 宿主 inject_message 不接受 media_urls（%s），附件一律跳过、只注入正文",
+                    exc,
+                )
+            return _inject(content, session_key)
         except Exception as exc:  # host rejected (not allowed, unknown key, ...)
             return False, f"{type(exc).__name__}: {exc}"
         if accepted:

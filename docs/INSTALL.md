@@ -225,3 +225,27 @@ rm -rf ~/.hermes/inbox-mosire/api-token        # 不再需要 adapter 时
 ```
 
 卸载后记得从 `plugins.enabled` 里去掉两个 id，并重启 gateway。
+
+## 推送模式（0.3.0 起）
+
+服务端能推 `inbox.push` 时，插件优先走推送；`changed` 只用来刷水位，不再整窗重投。
+
+```yaml
+plugins:
+  entries:
+    inbox-wake:
+      settings:
+        pushMode: on          # auto（默认）| on | off
+        pushGraceMs: 2000     # changed 让位给 push 的宽限
+        firstRunGuide: true   # 首条注入先说明 AGENTS.md / PERSONA.md
+        firstRunGuideText: "" # 留空用内置文案
+```
+
+- `auto`：第一次收到合法 push 后自动转 push 优先（老服务端不受影响）。
+- `on`：直接 push 优先，`changed` 一律 `wake.skipped reason=push-authoritative`。
+- `off`：完全忽略 push（不注入、不 ack），退回旧 changed 唤醒。
+
+注入用 `ctx.inject_message(..., media_urls=[...])`；宿主不认这个参数时自动降级为纯文本并只 warning 一次。
+每次投递后按 `deliveryId` 回 `POST /v1/inboxes/{inbox}/deliveries/{id}/ack`（4xx 放弃、5xx/传输错误重试一次）。
+
+核对：日志里应看到 `push.ok` / `push.ack` / `guide.sent`，且**不应**再出现 `wake.ok`（那是 changed 路径）。

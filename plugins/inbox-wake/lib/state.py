@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 BINDINGS_KEY = "bindings"
 OPS_KEY = "ops"
+#: ``inbox.push`` 去重水位（deliveryId + 已注入 itemId）。持久化，重启后同一投递不会注入第二次。
+PUSHES_KEY = "pushes"
 SCHEMA_VERSION = 1
 
 
@@ -99,3 +101,21 @@ class Store:
             data = self.ops()
             if data.pop(session_key, None) is not None:
                 self._write(OPS_KEY, data)
+
+    # ---- push deliveries ------------------------------------------------
+
+    def pushes(self) -> dict[str, dict]:
+        raw = self._read(PUSHES_KEY, {})
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+
+    def push_state(self, session_key: str) -> dict:
+        """``{"inboxId", "deliveryIds", "itemIds"}`` for one binding (``{}`` when never seen)."""
+        return self.pushes().get(session_key) or {}
+
+    def put_push_state(self, session_key: str, state: dict) -> None:
+        with self._lock:
+            data = self.pushes()
+            data[session_key] = dict(state)
+            self._write(PUSHES_KEY, data)

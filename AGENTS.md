@@ -36,6 +36,11 @@ InboxMosire (Java, 通知板)  ──HTTP/SSE/MCP──▶  InboxMosire-Hermes (
    原始业务字段 ≠ 凭据：token / 授权头 / QQ 凭据 / B 站 Cookie 仍然禁止出现在任何摘要里。
 4. adapter 只读：只允许 `GET /status`、`GET /events`、`GET /items`、`/items/{id}`。
    禁止 claim / renew / complete / release / push / items 写操作。
+   **唯一登记例外（2026-11-06，用户当次指令裁定，W5-1/W5-2）**：`inbox.push` 事件的
+   `POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`。理由：正文已经由服务端渲染好并原样
+   交给 Agent，ack 只表示「这条投递已经送到」，不 claim、不 complete 任何条目（`acked:false`
+   幂等返回）。该调用失败只 warning，绝不重投；实现见 `plugins/inbox-wake/lib/push.py`
+   的 `ack_delivery()` 与 `plugins/inbox-wake/lib/binding.py` 的 `_ack_delivery()`。
 5. 真实外发工具（`qq_conversation_send`、`conversation_send`、B 站评论私信、好友审批）
    在协调/开发工作区禁止启用；插件侧的门禁只是兜底，不是授权。
 6. 不新增固定家目录绝对路径：插件根从 `__file__` 推导，数据目录用 `ctx.state`，

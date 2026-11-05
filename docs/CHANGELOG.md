@@ -3,7 +3,44 @@
 按主题归纳，不追每个小修。日期均为本机真机轮次（2026-11-02）。
 宿主环境：Hermes `v0.22.5+3377.g0aab6dc`（2026.9.24）/ Python 3.14.9 / 模型 `deepseek-flash`。
 
-## 未发布（HEAD）
+## v0.3.0（2026-11-06，tag `Alpha20261106` / `v0.3.0`）
+
+### 汇总
+
+- 消费服务端 `inbox.push` 并回 ack（W5-1/W5-2）：见下节。
+- 首条引导（W5-4）：改由插件在注入前说明工作区 `AGENTS.md` / `PERSONA.md`，取代 persona-mode。
+- `pushMode` / `pushGraceMs`：真机联调发现 changed 与 push 会**各投一次**，加开关让 push 独占；
+  同时撤掉已排队的 changed 宽限唤醒。
+- `health.sse` 竞态修复：先写状态再起 SSE 线程，不再永久停在 `connecting`。
+- 版本：`plugin.yaml` 0.2.4 → **0.3.0**；测试 178 → **215**。
+
+### inbox-wake 0.2.5：消费 `inbox.push` 并回 ack（W5-1/W5-2，2026-11-06）
+
+- 版本：`plugins/inbox-wake/plugin.yaml` 0.2.4 → 0.2.5（后续随 v0.3.0 一并发布）。
+- 上游契约（InboxMosire 已实现，插件只消费）：SSE `inbox.push` / CloudEvents
+  `io.mosire.inbox.push.v1`，`data = {inbox, deliveryId, itemIds, text, attachments, important,
+  remaining, revision}`；`POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`（scope
+  `items:manage`，返回 `{deliveryId, acked, closedItems, remaining, remainingImportant}`，
+  重复 ack 返回 `acked:false`）；MCP 第 13 个工具 `inbox_ack`。
+- 新增 `plugins/inbox-wake/lib/push.py`：事件识别（信封 / 扁平两种形状）、`PushEnvelope`、
+  `local_media()`（只放行本地绝对路径，远端不下载）、`deliveryId`/`itemIds` 持久水位、
+  `ack_delivery()`（传输错误与 5xx 重试一次，4xx 立即放弃，`acked:false` 视为成功）。
+- `plugins/inbox-wake/lib/sse.py` 无需改动：`_on_event` 先识别 push 再进 revision 路径。
+- `plugins/inbox-wake/lib/binding.py`：新增 push 段（`_on_push_event` / `_deliver_push` /
+  `_inject_wake` / `_ack_delivery` / `_flush_pushes` / `_schedule_pushes`），`Runtime` 增
+  `pending_pushes` / `push_timer`，`set_mcp_ack()` 可装程序 MCP 的 ack；`_maybe_wake` 传
+  `skip_item_ids=`；`on_turn_end` 补投本轮攒下的 push。
+- **正文逐字注入**：`data.text` 原样进 `inject_message`（角色 `user`），不加 header/摘要/格式
+  （用户裁定 D-002/D-015）。`important` 只进日志与 `lastPush`。
+- `plugins/inbox-wake/lib/template.py`：`build_wake()` 新增 `skip_item_ids`，摘要行与正文段都跳过。
+- `plugins/inbox-wake/lib/state.py`：新增 `pushes` 键读写。`lib/client.py`：新增 `ack_delivery()`。
+- **只读条款例外**：ack 是唯一 items 写操作，已登记在 `AGENTS.md` 红线 4、`docs/DESIGN.md` §4.3a、
+  `docs/DSH-PARITY.md` §3。
+- 测试：新增 `tests/test_inbox_push.py`（27 例：解析、逐字注入、跨重启去重、ack 路径/参数、
+  MCP 优先与 HTTP 回退、ack 失败不重投、注入失败不 ack、附件 media_urls 与降级、changed 路径仍
+  工作且跳过已推送条目）。全仓 178 → 205 例通过（`python3 -m unittest discover -s tests`）。
+- NOT_RUN：真机（`hermes --tui` + 真实 inboxd）推送→注入→ack 端到端；`media_urls` 在真宿主上的
+  实际附件投递。
 
 ### minimal-system 0.2.1：修掉 manifest 里的假字段 + 0.2.0 的系统提示词文件（2026-11-04）
 

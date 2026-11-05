@@ -59,8 +59,11 @@
 | 固定指令段永不截断 | 同 | ✅ |
 | header `[INBOX_HOST_EVENT]` + `inbox=… revision=… available=… channels=[…]` | 同 | ✅ |
 | SSE + `Last-Event-ID` 续传、45s 心跳超时、1s→60s 重连退避 | 同 | ✅ |
-| 只读：不 claim/complete/push | 同（AGENTS.md 红线 4） | ✅ |
+| 只读：不 claim/complete/push | 同（AGENTS.md 红线 4），**唯一登记例外**：`inbox.push` 后的 `POST /deliveries/{id}/ack`（2026-11-06 用户裁定；不 claim 不 complete，失败不重投） | ✅ |
 | 占用标记 `PUT/DELETE occupancy`，失败降级 | 同 | ✅ |
+| （原版无此路径）推送直投 | `inbox.push`（`io.mosire.inbox.push.v1`）→ `push.parse_push()` → `data.text` **逐字**注入（无 header/摘要/格式，D-002/D-015）→ 按 `deliveryId` 持久去重 → 立即 ack（MCP `inbox_ack` 或 HTTP） | 🆕 服务端渲染正文，插件只搬运 |
+| （原版无此路径）附件随行 | `attachments` 里**本地绝对路径**的条目转 `media_urls` 交给 `inject_message`；远端 URL/相对路径只记日志不下载 | 🆕 宿主 `_media_payload` 亦只认本地绝对路径 |
+| （原版无此路径）push/changed 去重 | push 注入过的 `itemIds` 记在 `pushes.itemIds`，`template.build_wake(skip_item_ids=…)` 让 changed 唤醒跳过它们 | 🆕 双事件并存期的必要约束 |
 | `applyRest(restSeconds)`：完成类工具结果带 `restSeconds` → `nextWakeAllowedAt` | `post_tool_call` 钩子观察 `inbox_rest`（含 `mcp__<server>__inbox_rest`）结果里的 `restSeconds` → 写 `wake.nextWakeAllowedAt` 并记 `rest.applied`；非 rest 工具忽略 | ✅ |
 | program-MCP 就绪诊断（`hasBusinessTools(agent, wakeMode)`） | 查工具注册表里是否存在 `inbox_list`（含 MCP 前缀），结果写 `health.programMcp` 并在 `status` 里显示 | 🔁 |
 
@@ -79,7 +82,7 @@
 
 ## 5. 汇总
 
-- **语义对齐**：19 项 ✅ + 9 项 🔁。
+- **语义对齐**：19 项 ✅ + 9 项 🔁；另有 3 项 🆕 是上游 `inbox.push`/ack 契约新增、DSH 原版没有的路径。
 - **已知差异**：6 项 ⚠️（system prompt 不能替换、无 preset 工具收窄、无 turn 状态事件、
   gateway 注入需显式授权、无幂等键、无 `turn-stopping`）。
 - **不做**：桌面面板/挂载态 suspend-resume（❌，用户明确不看 UI）。

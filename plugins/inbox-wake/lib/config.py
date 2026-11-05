@@ -57,6 +57,14 @@ class Config:
     #: 每个 (apiUrl, inboxId) 只保留这么多个**活跃**绑定；多的降级成 passive（不订阅、不唤醒）。
     #: 僵尸来源：每次 one-shot / CLI 会话都可能 autoBind 一条，会话结束后没人解绑。
     max_bindings_per_inbox: int = 1
+    # D-009：首次注入时先发一条极短的工作区说明，让 Agent 自己去读 AGENTS.md / PERSONA.md，
+    # 而不是由宿主把人设拼进 system prompt 或每轮 user 消息。
+    #: 投递通道。``on`` = 只信服务端 push（changed 仅刷新水位）；``off`` = 只用 changed（旧服务端）；
+    #: ``auto`` = 见到第一帧 push 前沿用 changed（并为 changed 加 ``pushGraceMs`` 宽限）。
+    push_mode: str = "auto"
+    push_grace_ms: int = 2000
+    first_run_guide: bool = True
+    first_run_guide_text: str = ""
     pending_ttl_seconds: int = 600
     # A local (classic REPL / desktop) session is only *live* inside the gateway while a
     # turn is running, so an idle wake there is refused for reasons the item cannot fix.
@@ -135,6 +143,16 @@ class Config:
             get("wakeContentTotalChars"), 30000, minimum=200, maximum=200000
         )
 
+        mode = str(get("pushMode") or "auto").strip().lower()
+        if mode not in ("auto", "on", "off"):
+            warnings.append(f"pushMode 非法（{mode!r}），已回退 auto")
+            mode = "auto"
+        cfg.push_mode = mode
+        cfg.push_grace_ms = safe.coerce_int(get("pushGraceMs"), 2000, minimum=0, maximum=30000)
+        cfg.first_run_guide = safe.coerce_bool(get("firstRunGuide"), True)
+        cfg.first_run_guide_text = safe.clean_text(
+            str(get("firstRunGuideText") or ""), 2000
+        )
         cfg.debounce_ms = safe.coerce_int(get("debounceMs"), 300, minimum=0, maximum=10000)
         cfg.heartbeat_timeout_seconds = safe.coerce_int(
             get("heartbeatTimeoutSeconds"), 45, minimum=5, maximum=600
@@ -185,7 +203,8 @@ class Config:
             "enabled", "apiUrl", "inboxId", "channels", "adapterTokenFile", "wakeMode",
             "wakeProfile", "summaryEnabled", "summaryMaxItems", "summaryMaxTitleChars",
             "summaryMaxTotalChars", "wakeContent", "wakeContentMaxChars",
-            "wakeContentTotalChars", "debounceMs", "heartbeatTimeoutSeconds",
+            "wakeContentTotalChars", "pushMode", "pushGraceMs", "firstRunGuide", "firstRunGuideText",
+            "debounceMs", "heartbeatTimeoutSeconds",
             "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs", "wakeRetrySeconds",
             "requestTimeoutMs", "maxBindings", "maxBindingsPerInbox", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
             "programTools", "programToolsRequired",

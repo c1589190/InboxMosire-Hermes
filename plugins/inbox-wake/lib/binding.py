@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from . import oplog, safe, template
+from . import oplog, push, safe, template
 from .client import InboxClient, InboxError, TokenRef
 from .state import Store
 
@@ -110,6 +110,9 @@ class Runtime:
     turn_running: bool = False
     suspended: bool = False
     pending: Optional[dict] = None
+    #: ``inbox.push`` deliveries that arrived while a turn was running (flushed on turn end).
+    pending_pushes: list = field(default_factory=list)
+    push_timer: Any = None
     last_event_at: float = 0.0
     lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -149,6 +152,10 @@ def new_record(
         "lastWokenRevision": 0,
         "lastStatus": {"revision": 0, "available": 0, "at": None, "error": None},
         "lastWake": {"at": None, "revision": 0, "messageId": "", "ok": None, "error": None},
+        # ``inbox.push`` 路径：不存正文（正文只走注入），只存 id/计数/metadata 供 status 与 ops log 对照。
+        "lastDeliveryId": "",
+        "lastPush": {"at": None, "deliveryId": "", "items": 0, "ok": None, "error": None},
+        "lastAck": {"at": None, "deliveryId": "", "ok": None, "attempts": 0, "error": None},
         "wake": {"attempts": 0, "nextWakeAllowedAt": 0},
         "summary": {"state": "unknown", "shown": 0, "remaining": 0, "at": None, "code": None, "message": None},
         "health": {
@@ -194,6 +201,10 @@ class BindingManager:
         # wakes. Keep a probe and re-ask every time we are about to wake.
         self.inject_probe: Optional[Callable[[], str]] = None
         self._skip_logged: dict[str, int] = {}
+        #: Optional ``(inbox_id, delivery_id) -> (ok, error)`` ack through the program MCP
+        #: (``inbox_ack``). Hermes exposes no synchronous tool-call API to a plugin, so this stays
+        #: ``None`` in-process and :meth:`_ack_delivery` falls back to the HTTP route.
+        self.mcp_ack: Optional[Callable[[str, str], tuple[bool, str]]] = None
 
     def set_inject_capability(
         self,
@@ -206,6 +217,10 @@ class BindingManager:
         fallback used when no probe is installed."""
         self.inject_capability = capability
         self.inject_probe = probe
+
+    def set_mcp_ack(self, ack: Optional[Callable[[str, str], tuple[bool, str]]]) -> None:
+        """Install (or clear) an MCP-based ``inbox_ack`` callable; HTTP stays the fallback."""
+        self.mcp_ack = ack
 
     def _current_inject_capability(self) -> str:
         """Ask the host right now — an injector may attach long after ``register()``."""
@@ -473,10 +488,13 @@ class BindingManager:
             self._log(record, "occupancy.put", ok=False, code=exc.code)
         with runtime.lock:
             runtime.thread = worker
-        worker.start()
-        self._ensure_poll()
+        # Set the health record before the worker starts: the SSE thread flips it to
+        # "open" the moment the stream connects, and writing "connecting" afterwards
+        # would overwrite that (health.sse stuck at connecting forever).
         record["health"]["sse"] = "connecting"
         self._persist(record)
+        worker.start()
+        self._ensure_poll()
         self._log(record, "binding.start", reason=reason, inbox=record["inboxId"])
 
     def _ensure_poll(self) -> None:
@@ -521,7 +539,11 @@ class BindingManager:
                 if runtime.timer is not None:
                     runtime.timer.cancel()
                     runtime.timer = None
+                if runtime.push_timer is not None:
+                    runtime.push_timer.cancel()
+                    runtime.push_timer = None
                 runtime.pending = None
+                runtime.pending_pushes = []
         try:
             client = self._client(record)
             client.delete_occupancy(record["inboxId"], record.get("sessionId") or key)
@@ -547,6 +569,10 @@ class BindingManager:
                     if runtime.timer is not None:
                         runtime.timer.cancel()
                         runtime.timer = None
+                    if runtime.push_timer is not None:
+                        runtime.push_timer.cancel()
+                        runtime.push_timer = None
+                    runtime.pending_pushes = []
 
     # ---- public operations ---------------------------------------------
 
@@ -827,6 +853,11 @@ class BindingManager:
         if pending:
             # Give the finished turn a beat before the wake lands in the same session.
             self._schedule(session_key, delay_ms=max(50, self.config.debounce_ms), reason="pending-wake")
+        with runtime.lock:
+            parked = bool(runtime.pending_pushes)
+        if parked:
+            # 本轮跑着时到达的 push 正文，等这一轮结束再注入（它走自己的路径，不合成 changed 唤醒）。
+            self._schedule_pushes(session_key, delay_ms=max(50, self.config.debounce_ms))
 
     def on_tool_result(self, session_id: str, tool_name: str, result: Any) -> None:
         """``inbox_rest`` returns ``restSeconds``; honour it so a snoozed inbox stays quiet."""
@@ -900,7 +931,258 @@ class BindingManager:
         runtime.last_event_at = self.clock()
         self._persist(record)
         self._log(record, "sse.event", kind=safe.clean_text(event.get("event"), 32))
-        self._schedule(session_key, delay_ms=self.config.debounce_ms, reason="event")
+        if push.is_push(event):
+            # ``inbox.push`` 自带服务端渲染好的整段正文：原样注入 + 立即 ack，不走 revision 唤醒路径
+            # （那条路径会重新拉列表、自己渲染，违反 D-002/D-015「只注入那一段 String」）。
+            self._on_push_event(session_key, event)
+            return
+        delay_ms = self.config.debounce_ms
+        if getattr(self.config, "push_mode", "auto") == "auto":
+            record = self.store.get_binding(session_key) or {}
+            if not record.get("pushMode"):
+                # 宽限期：等 push 先到；到了就撤，没到才用 changed 兜底。
+                delay_ms = max(delay_ms, int(getattr(self.config, "push_grace_ms", 0) or 0))
+        self._schedule(session_key, delay_ms=delay_ms, reason="event")
+
+    # ---- push path ------------------------------------------------------
+
+    def _on_push_event(self, session_key: str, event: dict[str, Any]) -> None:
+        """Handle one ``inbox.push`` delivery: dedupe → inject → ack (in that order)."""
+        record = self.store.get_binding(session_key)
+        if record is None:
+            return
+        if getattr(self.config, "push_mode", "auto") == "off":
+            # 显式只用 changed（旧服务端兼容态）：push 一律不消费，也不 ack。
+            self._log(record, "push.skipped", reason="mode-off")
+            return
+        envelope = push.parse_push(event)
+        if envelope is None:
+            self._log(record, "push.invalid")
+            return
+        if not record.get("enabled") or record.get("passive"):
+            self._log(record, "push.skipped", reason="binding-inactive", deliveryId=envelope.delivery_id)
+            return
+        inbox_id = str(record.get("inboxId") or "")
+        if envelope.inbox and inbox_id and envelope.inbox != inbox_id:
+            # 服务端已按订阅过滤；这里再挡一次，免得跨板投递被注进错误的会话。
+            self._log(record, "push.skipped", reason="inbox-mismatch", deliveryId=envelope.delivery_id)
+            return
+        runtime_pending = self._runtime.get(session_key)
+        if runtime_pending is not None and runtime_pending.timer is not None:
+            # auto 模式下 changed 会先排一个宽限唤醒；push 一到就把它撤掉，避免同一批消息注入两次。
+            runtime_pending.timer.cancel()
+            runtime_pending.timer = None
+            self._log(record, "push.cancelled-changed", deliveryId=envelope.delivery_id)
+        if not record.get("pushMode"):
+            # 服务端一旦能推 push，就由 push 接管投递：changed 唤醒只会把同一批消息再报一遍
+            # （实测：同一条消息先被 changed 唤醒报一次，再被 push 原样注入一次）。
+            record["pushMode"] = True
+            record["pushModeSince"] = _now_iso()
+            self._persist(record)
+            self._log(record, "push.mode", deliveryId=envelope.delivery_id)
+        if push.delivery_seen(self.store, session_key, envelope.delivery_id, inbox_id):
+            # 同一个 deliveryId 只注入一次（水位落在 ctx.state 里，进程重启后依然生效）。
+            self._log(record, "push.duplicate", deliveryId=envelope.delivery_id)
+            return
+        if self._current_inject_capability() == "none":
+            # 没注入能力的进程（one-shot / worker）既不能投递也不能 ack：ack 了 Agent 就永远看不到。
+            self._log(record, "push.skipped", reason="no-inject-host", deliveryId=envelope.delivery_id)
+            return
+        runtime = self._runtime_for(session_key)
+        with runtime.lock:
+            busy = runtime.turn_running
+            if busy:
+                runtime.pending_pushes.append(envelope)
+        if busy:
+            self._log(record, "push.defer", reason="turn-running", deliveryId=envelope.delivery_id)
+            return
+        self._deliver_push(record, envelope)
+
+    def _deliver_push(self, record: dict[str, Any], envelope: push.PushEnvelope) -> None:
+        """Inject the server-rendered text verbatim, remember the delivery, then ack once."""
+        session_key = record["sessionKey"]
+        inbox_id = str(record.get("inboxId") or "")
+        media_urls, skipped = push.local_media(envelope.attachments)
+        if skipped:
+            logger.warning(
+                "inbox-wake: push %s 有 %d 个附件不是本地绝对路径，已跳过（不下载远端 URL）：%s",
+                envelope.delivery_id,
+                len(skipped),
+                safe.clean_text(", ".join(item for item in skipped if item), 200),
+            )
+            self._log(
+                record,
+                "push.attachment.skipped",
+                deliveryId=envelope.delivery_id,
+                count=len(skipped),
+            )
+        self._maybe_send_guide(record, session_key)
+        ok, error = self._inject_wake(envelope.text, session_key, media_urls=media_urls)
+        if not ok:
+            record["lastPush"] = {
+                "at": _now_iso(),
+                "deliveryId": envelope.delivery_id,
+                "items": len(envelope.item_ids),
+                "important": envelope.important,
+                "media": len(media_urls),
+                "ok": False,
+                "error": safe.clean_text(error, 200),
+            }
+            self._persist(record)
+            self._log(record, "push.failed", deliveryId=envelope.delivery_id, error=error)
+            return  # 没注入成功就不 ack：条目必须还留在板上
+        push.mark_delivered(
+            self.store, session_key, envelope.delivery_id, envelope.item_ids, inbox_id
+        )
+        record["lastDeliveryId"] = envelope.delivery_id
+        record["lastPush"] = {
+            "at": _now_iso(),
+            "deliveryId": envelope.delivery_id,
+            "revision": envelope.revision,
+            "items": len(envelope.item_ids),
+            "important": envelope.important,
+            "remaining": envelope.remaining,
+            "media": len(media_urls),
+            "ok": True,
+            "error": None,
+        }
+        self._persist(record)
+        self._log(
+            record,
+            "push.ok",
+            deliveryId=envelope.delivery_id,
+            items=len(envelope.item_ids),
+            important=envelope.important,
+            media=len(media_urls),
+        )
+        ack_ok, ack_error = self._ack_delivery(record, envelope.delivery_id)
+        if ack_ok:
+            self._log(record, "push.ack", deliveryId=envelope.delivery_id)
+            return
+        # ack 失败只 warning：正文已经交给 Agent 了，重投只会让同一条消息出现两次。
+        logger.warning(
+            "inbox-wake: push ack 失败 delivery=%s: %s（不重复注入，也不再重试）",
+            envelope.delivery_id,
+            ack_error,
+        )
+        self._log(record, "push.ack.failed", deliveryId=envelope.delivery_id, error=ack_error)
+
+    #: 首条注入前先发一次的工作区说明（D-009）。只说「去读哪两个文件」，不复述内容。
+    DEFAULT_GUIDE = (
+        "【工作区说明】本工作区常驻两份文档：AGENTS.md 是硬规则与路径约定，"
+        "PERSONA.md 是我的身份与说话方式。开工前先读这两份；之后按需查阅，不要假设已经读过。"
+    )
+
+    def _maybe_send_guide(self, record: dict[str, Any], session_key: str) -> None:
+        """每个会话只发一次：引导 Agent 自己去读 AGENTS.md / PERSONA.md。"""
+        if record.get("guideSent") or not bool(getattr(self.config, "first_run_guide", True)):
+            return
+        text = str(getattr(self.config, "first_run_guide_text", "") or "").strip()
+        if not text:
+            text = self.DEFAULT_GUIDE
+        ok, error = self._inject_wake(text, session_key)
+        if not ok:
+            logger.warning("inbox-wake: 首条工作区说明注入失败，下条推送再试：%s", safe.clean_text(error, 200))
+            self._log(record, "guide.failed", error=error)
+            return
+        record["guideSent"] = True
+        record["guideSentAt"] = _now_iso()
+        self._persist(record)
+        self._log(record, "guide.sent")
+
+    def _inject_wake(
+        self,
+        text: str,
+        session_key: str,
+        *,
+        media_urls: Optional[list[str]] = None,
+    ) -> tuple[bool, str]:
+        """One injection entry for both paths: ``self.inject`` = host ``ctx.inject_message``.
+
+        没有附件时**不多传任何关键字**，保持旧的两参数调用（老宿主与测试的注入器只接受两个参数）；
+        有附件时带 ``media_urls``，注入器不认这个关键字（``TypeError``）就降级为纯文本并 warning 一次。
+        """
+        if media_urls:
+            try:
+                return self.inject(text, session_key, media_urls=list(media_urls))
+            except TypeError:
+                logger.warning(
+                    "inbox-wake: 注入入口不接受 media_urls，改为纯文本注入（%d 个附件未随行）",
+                    len(media_urls),
+                )
+        return self.inject(text, session_key)
+
+    def _ack_delivery(self, record: dict[str, Any], delivery_id: str) -> tuple[bool, str]:
+        """Ack through the program MCP ``inbox_ack`` when one is installed, else over HTTP."""
+        inbox_id = str(record.get("inboxId") or "")
+        mcp = self.mcp_ack
+        if mcp is not None:
+            try:
+                ok, error = mcp(inbox_id, delivery_id)
+            except Exception as exc:  # noqa: BLE001 - a broken MCP must not lose the delivery
+                ok, error = False, f"{type(exc).__name__}: {safe.clean_text(str(exc), 200)}"
+            if ok:
+                return True, ""
+            self._log(record, "push.ack.mcp-fallback", deliveryId=delivery_id, error=error)
+
+        def call(target_inbox: str, target_delivery: str) -> dict:
+            client = self._client(record)
+            return self._call_with_token_heal(
+                record, lambda: client.ack_delivery(target_inbox, target_delivery)
+            )
+
+        ok, error, attempts = push.ack_delivery(
+            call, inbox_id=inbox_id, delivery_id=delivery_id, retries=1
+        )
+        record["lastAck"] = {
+            "at": _now_iso(),
+            "deliveryId": delivery_id,
+            "ok": ok,
+            "attempts": attempts,
+            "error": None if ok else error,
+        }
+        self._persist(record)
+        return ok, error
+
+    def _flush_pushes(self, session_key: str) -> None:
+        """Deliver pushes that were parked because a turn was running."""
+        runtime = self._runtime.get(session_key)
+        if runtime is None:
+            return
+        with runtime.lock:
+            runtime.push_timer = None
+            pending = list(runtime.pending_pushes)
+            runtime.pending_pushes = []
+            busy = runtime.turn_running
+        if not pending:
+            return
+        record = self.store.get_binding(session_key)
+        if record is None or not record.get("enabled"):
+            return
+        if busy:
+            with runtime.lock:
+                runtime.pending_pushes = pending + runtime.pending_pushes
+            self._schedule_pushes(session_key, delay_ms=self.config.wake_retry_seconds * 1000)
+            return
+        inbox_id = str(record.get("inboxId") or "")
+        for envelope in pending:
+            if push.delivery_seen(self.store, session_key, envelope.delivery_id, inbox_id):
+                continue
+            self._deliver_push(record, envelope)
+
+    def _schedule_pushes(self, session_key: str, *, delay_ms: int) -> None:
+        runtime = self._runtime.get(session_key)
+        if runtime is None:
+            return
+        with runtime.lock:
+            if runtime.push_timer is not None:
+                runtime.push_timer.cancel()
+            timer = threading.Timer(
+                max(0, delay_ms) / 1000.0, self._flush_pushes, args=(session_key,)
+            )
+            timer.daemon = True
+            runtime.push_timer = timer
+        timer.start()
 
     def _schedule(self, session_key: str, *, delay_ms: int, reason: str) -> None:
         runtime = self._runtime.get(session_key)
@@ -1035,6 +1317,16 @@ class BindingManager:
                 record["lastWokenRevision"] = revision
                 self._persist(record)
             return
+        push_authoritative = (
+            getattr(self.config, "push_mode", "auto") == "on" or bool(record.get("pushMode"))
+        )
+        if push_authoritative:
+            # push 接管后 changed 只用来推进水位：再拼一条唤醒就会重复注入。
+            if revision > last_woken:
+                record["lastWokenRevision"] = revision
+                self._persist(record)
+            self._log(record, "wake.skipped", reason="push-authoritative", revision=revision)
+            return
         if revision <= last_woken:
             return
 
@@ -1076,6 +1368,8 @@ class BindingManager:
         if self.config.summary_enabled:
             summary_items, summary_remaining, summary_state = self._summary_items(record)
         content_items = self._content_items(record)
+        # push 已经原样注入过的条目不再进 changed 唤醒（同一批消息只出现一次）。
+        skip_ids = push.skipped_item_ids(self.store, session_key, str(record.get("inboxId") or ""))
 
         text = template.build_wake(
             inbox_id=record["inboxId"],
@@ -1093,12 +1387,14 @@ class BindingManager:
             content_max_chars=self.config.wake_content_max_chars,
             content_total_chars=self.config.wake_content_total_chars,
             content_enabled=self.config.wake_content != "off",
+            skip_item_ids=skip_ids,
         )
         key = template.wake_key(
             inbox_id=record["inboxId"], revision=revision, session_ref=str(record.get("sessionId") or session_key)
         )
         message_id = template.wake_message_id(key)
 
+        self._maybe_send_guide(record, session_key)
         ok, error = self.inject(text, session_key)
         record["summary"] = {
             "state": summary_state["state"],

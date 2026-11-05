@@ -4,6 +4,10 @@ Only the read/observe surface the wake-adapter contract allows is implemented he
 ``/items``, ``/items/{id}``, occupancy and the SSE stream. Claim / complete / release / push are
 *not* implemented on purpose — those are the agent's business tools (InboxMosire MCP), and an
 adapter that can claim is an adapter that can silently consume someone else's work.
+
+唯一例外是 ``ack_delivery``（``POST /deliveries/{id}/ack``）：``inbox.push`` 的正文已经原样
+注入给 Agent，ack 只表示「这条投递已经交给 Agent 了」，不 claim、不 complete 任何条目。
+该例外在 ``docs/DESIGN.md`` 与 ``docs/DSH-PARITY.md`` 登记。
 """
 
 from __future__ import annotations
@@ -243,6 +247,22 @@ class InboxClient:
             raise InboxError("INVALID_ARGUMENT", f"itemId 非法: {item_id!r}")
         data = self._request(
             "GET", self._inbox_path(inbox_id, f"/items/{urllib.parse.quote(item_id)}")
+        )
+        return data if isinstance(data, dict) else {}
+
+    def ack_delivery(self, inbox_id: str, delivery_id: str) -> dict[str, Any]:
+        """``POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`` (scope ``items:manage``).
+
+        这是本插件唯一一次 items 写操作：``inbox.push`` 的正文已经原样注入给 Agent，
+        ack 只是把这条投递的条目关掉（重复 ack 服务端返回 ``acked: false``，幂等）。
+        ``InboxHttpServer.ackDelivery`` 不读请求体，发一个 JSON ``{}`` 只为带上正确的 Content-Type。
+        """
+        if not safe.is_safe_id(delivery_id):
+            raise InboxError("INVALID_ARGUMENT", f"deliveryId 非法: {delivery_id!r}")
+        data = self._request(
+            "POST",
+            self._inbox_path(inbox_id, f"/deliveries/{urllib.parse.quote(delivery_id)}/ack"),
+            body={},
         )
         return data if isinstance(data, dict) else {}
 

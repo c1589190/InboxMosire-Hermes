@@ -167,14 +167,25 @@ def build_wake(
     content_max_chars: int = 12000,
     content_total_chars: int = 30000,
     content_enabled: bool = False,
+    skip_item_ids: Sequence[str] = (),
 ) -> str:
-    """Compose the wake message: header, instructions, optional summary, optional body."""
+    """Compose the wake message: header, instructions, optional summary, optional body.
+
+    ``skip_item_ids``：这些条目已经由 ``inbox.push`` 原样注入过（服务端渲染的整段正文），
+    ``inbox.changed`` 再渲染一遍就是同一条消息出现两次——摘要行和正文段都跳过。
+    """
     compact = is_compact(mode=mode, profile=profile)
     rendered: set[str] = set()
+    skipped = {str(item_id) for item_id in skip_item_ids if item_id}
     body = ""
-    if content_enabled and content_items:
+    content_rows = [
+        item
+        for item in content_items
+        if str(item.get("itemId") or item.get("id") or "") not in skipped
+    ]
+    if content_enabled and content_rows:
         body = content_block(
-            content_items,
+            content_rows,
             per_item_chars=content_max_chars,
             total_chars=content_total_chars,
             rendered=rendered,
@@ -188,7 +199,7 @@ def build_wake(
             max_total_chars=summary_max_total_chars,
             max_title_chars=summary_max_title_chars,
             remaining=summary_remaining,
-            skip_item_ids=rendered,
+            skip_item_ids=list(rendered) + list(skipped),
             intro=not compact,
         )
     instructions_text = instructions(mode=mode, profile=profile, has_summary=bool(summary))
