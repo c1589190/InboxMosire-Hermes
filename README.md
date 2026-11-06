@@ -61,7 +61,7 @@ cp kit.env.example kit.env        # 改 jar 路径 / 数据目录 / 端口
 
 | 组件 | 作用 | 依赖宿主面 |
 |---|---|---|
-| `plugins/iibot-hermes` | **唯一插件**（Alpha20261106 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并）。三段能力：`lib/wake/` 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令；`lib/prompt/` 一句式 system prompt（`llm_request` 中间件，**默认关**，宿主 `agent.system_prompt_override` 优先）；`lib/persona/` 人设契约注入（`pre_llm_call` + `pre_tool_call` 守卫，**默认关**，D-009） | `inject_message` / `register_tool` / `register_command` / `register_middleware("llm_request")` / `pre_llm_call` / `pre_tool_call` / `post_llm_call` / `post_tool_call` / `on_session_*` |
+| `plugins/iibot-hermes` | **唯一插件**（0.4.0 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并）。三段能力：`lib/wake/` 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令；`lib/prompt/` 一句式 system prompt（`llm_request` 中间件，**默认关**，宿主 `agent.system_prompt_override` 优先）；`lib/persona/` 人设契约注入（`pre_llm_call` + `pre_tool_call` 守卫，**默认关**，D-009） | `inject_message` / `register_tool` / `register_command` / `register_middleware("llm_request")` / `pre_llm_call` / `pre_tool_call` / `post_llm_call` / `post_tool_call` / `on_session_*` |
 | `kit/` | 一键发行包：`kit.sh`（doctor/up/status/down/probe/token）+ `kit.env.example` + `引导.md` | 只用宿主 CLI 与 InboxMosire jar |
 
 ---
@@ -159,7 +159,7 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 | `firstRunGuideText` | `""` | 覆盖上面那条说明的文案；空 = 用内置默认 |
 | `allow_gateway_injection`（`plugins.entries.iibot-hermes.`，**一级 entry 键，不在 settings 里**） | — | 宿主侧授权，**必须显式 `true`**；旧位置 `plugins.entries.inbox-wake.allow_gateway_injection` 只在启动时告警，不再生效 |
 
-### prompt / persona（Alpha20261106 起默认关）
+### prompt / persona（0.4.0 起默认关）
 
 | 键 | 默认 | 说明 |
 |---|---|---|

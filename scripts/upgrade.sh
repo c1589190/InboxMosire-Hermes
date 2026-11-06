@@ -7,7 +7,7 @@
 #   * 本脚本 —— 对 `cp -a` / `sync-plugins.sh` 装进来的插件同样有效：按 git ref 取一份干净
 #     副本整目录替换，备份、清 __pycache__、语法自检、重启 gateway、打印版本与配置键。
 #
-#   ./scripts/upgrade.sh                     # 升级到默认 ref（Alpha20261106）
+#   ./scripts/upgrade.sh                     # 升级到默认 ref（v0.4.0）
 #   ./scripts/upgrade.sh --ref v0.3.0        # 指定 tag / 分支 / 提交
 #   ./scripts/upgrade.sh --latest            # 用远端最新的 v* tag
 #   ./scripts/upgrade.sh --dry-run           # 只报告会做什么
@@ -24,7 +24,7 @@ HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_IDS=(iibot-hermes)
 # 1.0.0 合并前的目录：替换前必须删除，否则同进程里新旧插件会把工具/hook/命令各注册一遍。
 LEGACY_PLUGIN_IDS=(inbox-wake minimal-system persona-mode)
-DEFAULT_REF="${DEFAULT_REF:-Alpha20261106}"
+DEFAULT_REF="${DEFAULT_REF:-v0.4.0}"
 
 REF="$DEFAULT_REF"
 DRY_RUN=0

@@ -1,6 +1,6 @@
 # 对接提示词（可直接粘给 Agent）
 
-> **Alpha20261106 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目。
+> **0.4.0 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 0.4.0 条目。
 
 两个自包含的提示词：**A** 在目标机装 iiBot 并起服务，**B** 在 Hermes 侧装插件并接上 A。
 版本锚点：iiBot `Alpha20261103`、插件 `v0.2.0`。真实联调前，一切结果按「跑没跑」记录，不许写「应该可以」。

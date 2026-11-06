@@ -1,6 +1,6 @@
 # 工具、命令与配置
 
-插件 id：`iibot-hermes`（Alpha20261106 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并；
+插件 id：`iibot-hermes`（0.4.0 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并；
 设置分 `settings.inbox` / `settings.prompt` / `settings.persona` 三段，缺段时只读回落旧命名空间）。
 工具名与 DSH 原版**逐字相同**，参数名同义。
 
@@ -137,7 +137,7 @@ start_failed, stopped, rest}`。
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `enabled` | bool | `false` | 0.x 的 persona-mode 默认 `true`；Alpha20261106 按 D-009 默认 `false`。打开才注册 `pre_llm_call` + `pre_tool_call` |
+| `enabled` | bool | `false` | 0.x 的 persona-mode 默认 `true`；0.4.0 按 D-009 默认 `false`。打开才注册 `pre_llm_call` + `pre_tool_call` |
 | `personaFile` | str | `PERSONA.md` | 相对 session cwd；绝对路径优先 |
 | `maxChars` | int | `4000` | 正文截断上限 |
 | `outboundGuard` | bool | `true` | 缺文件时拦截外发工具 |
@@ -148,7 +148,7 @@ start_failed, stopped, rest}`。
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `enabled` | bool | `false` | 0.x 的 minimal-system 默认 `true`；Alpha20261106 默认 `false`（宿主 `agent.system_prompt_override` 优先）。为真才注册 `llm_request` 中间件 |
+| `enabled` | bool | `false` | 0.x 的 minimal-system 默认 `true`；0.4.0 默认 `false`（宿主 `agent.system_prompt_override` 优先）。为真才注册 `llm_request` 中间件 |
 | `systemPrompt` | str | `You are a helpful software engineer assistant.` | 整段替换 system prompt 的回落值 |
 | `systemPromptFile` | str | `""` | 非空且可读时优先于 `systemPrompt`；留空 = `$HERMES_HOME/SYSTEM.md`，按 mtime 热更新 |
 | `logRewrite` | bool | `false` | 记录每次替换的形状/字数（不含内容与凭据） |

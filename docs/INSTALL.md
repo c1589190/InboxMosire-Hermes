@@ -42,7 +42,7 @@ cd InboxMosire-Hermes
 （写入 `plugins.entries.iibot-hermes.settings.prompt.systemPromptFile`，不写则读 `$HERMES_HOME/SYSTEM.md`、
 再不行用一句常量）、`PERSONA_ENABLED`（`0`）、`PERSONA_FILE`、`TOKEN_PATH`、`HERMES_BIN`。
 
-Alpha20261106 起 `prompt.enabled` / `persona.enabled` **默认都是 false**：装完不会接管 system prompt、
+0.4.0 起 `prompt.enabled` / `persona.enabled` **默认都是 false**：装完不会接管 system prompt、
 也不会注入人设（D-009）。要回到 0.x 的行为，显式 `PROMPT_ENABLED=1 ./scripts/install.sh settings`（或手写
 `hermes config set --force plugins.entries.iibot-hermes.settings.prompt.enabled true`）。**不要**同时打开
 `prompt.enabled` 与宿主 `agent.system_prompt_override`，两处会互相覆盖。
@@ -80,7 +80,7 @@ plugins:
 
 要点：
 
-- `allow_gateway_injection` 在 **entry 层**（和 `settings` 同级），不在 `settings` 下。Alpha20261106 起宿主只读
+- `allow_gateway_injection` 在 **entry 层**（和 `settings` 同级），不在 `settings` 下。0.4.0 起宿主只读
   `plugins.entries.iibot-hermes.allow_gateway_injection`；旧位置 `plugins.entries.inbox-wake.allow_gateway_injection`
   只在启动时告警（`scripts/upgrade.sh` 会自动搬）。
 - 设置键都读 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.<key>`；camelCase 合法。
@@ -244,9 +244,9 @@ rm -rf ~/.hermes/inbox-mosire/api-token        # 不再需要 adapter 时
 
 卸载后记得从 `plugins.enabled` 里去掉 `iibot-hermes`，并重启 gateway。
 
-## 从 0.x 迁移到 Alpha20261106（三合一）
+## 从 0.x 迁移到 0.4.0（三合一）
 
-Alpha20261106 把 `inbox-wake` / `minimal-system` / `persona-mode` 合成一个 `iibot-hermes`。升级只需：
+0.4.0 把 `inbox-wake` / `minimal-system` / `persona-mode` 合成一个 `iibot-hermes`。升级只需：
 
 ```bash
 ./scripts/upgrade.sh --dry-run   # 看会删哪些目录、换哪些文件
@@ -262,7 +262,7 @@ hermes config set --force plugins.entries.iibot-hermes.settings.inbox.apiUrl htt
 hermes config set --force plugins.entries.iibot-hermes.allow_gateway_injection true
 ```
 
-）。两个开关在 Alpha20261106 **默认关**，要恢复 0.x 行为需显式打开：
+）。两个开关在 0.4.0 **默认关**，要恢复 0.x 行为需显式打开：
 
 ```bash
 hermes config set --force plugins.entries.iibot-hermes.settings.prompt.enabled true    # 与 agent.system_prompt_override 二选一
@@ -290,7 +290,7 @@ hermes plugins update --yes               # 全部已装插件
 
 ```bash
 ./scripts/upgrade.sh --dry-run            # 先看会改什么
-./scripts/upgrade.sh                      # 默认升级到 Alpha20261106，自动重启 gateway
+./scripts/upgrade.sh                      # 默认升级到 v0.4.0，自动重启 gateway
 ./scripts/upgrade.sh --latest             # 取远端最新 v* tag
 ./scripts/upgrade.sh --ref v0.3.0         # 指定任意 tag / 分支 / 提交
 ./scripts/upgrade.sh --no-restart         # 只换文件，不重启

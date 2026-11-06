@@ -1,6 +1,6 @@
 # 设计
 
-> **Alpha20261106 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目。
+> **0.4.0 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 0.4.0 条目。
 
 ## 1. 位置
 

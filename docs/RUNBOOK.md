@@ -1,11 +1,11 @@
 # RUNBOOK：部署 / 启动 / 停止 / 排障
 
-面向"把 iibot-hermes（Alpha20261106 三合一：唤醒 + prompt + persona）装到另一台机器（含远程服务器）"的操作手册。
+面向"把 iibot-hermes（0.4.0 三合一：唤醒 + prompt + persona）装到另一台机器（含远程服务器）"的操作手册。
 
-> Alpha20261106 起插件只有一个：`plugins/iibot-hermes`，设置是
+> 0.4.0 起插件只有一个：`plugins/iibot-hermes`，设置是
 > `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在
 > `plugins.entries.iibot-hermes.allow_gateway_injection`。文中出现的旧 id / 旧路径是 0.x 的写法，
-> 装了 Alpha20261106 就用新路径（映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目）。
+> 装了 0.4.0 就用新路径（映射见 `docs/CHANGELOG.md` 的 0.4.0 条目）。
 **先读这三条事实，否则一定会踩坑：**
 
 1. 插件的 hooks、4 个 `inbox_adapter_*` 工具、`/inbox` 命令**都运行在 gateway 进程里**
@@ -168,7 +168,7 @@ nohup hermes gateway run >> ~/.hermes/logs/gateway.log 2>&1 &
 
 ## 4. 升级 / 回滚
 
-`plugins/iibot-hermes`（Alpha20261106 三合一）是纯 Python，升级 = 换目录 + 让进程重新 `register(ctx)`，
+`plugins/iibot-hermes`（0.4.0 三合一）是纯 Python，升级 = 换目录 + 让进程重新 `register(ctx)`，
 不涉及数据迁移。**替换前必须删掉 0.x 的三个旧目录**，否则同进程里新旧插件各注册一遍
 
 ### 4.1 一条命令（本地或远端 checkout）
@@ -206,7 +206,7 @@ ssh ops@host 'hermes plugins doctor iibot-hermes'
   `hermes plugins enable <id>` 也能让 gateway 跑 `reload-plugins` 重挂 hook，
   但 `tools` 与 `system_prompt_section` 按 prompt-cache 不变量延后到下一个 session。
 - 一次性会话：下次启动自然加载。
-- 新增/升级插件（Alpha20261106 只有一个 `iibot-hermes`）：先确认 `~/.hermes/config.yaml` 的
+- 新增/升级插件（0.4.0 只有一个 `iibot-hermes`）：先确认 `~/.hermes/config.yaml` 的
   `plugins.enabled` 里有它，否则装进目录也不会加载。
 - `settings.prompt.systemPromptFile` 的**内容**是热更新的（按 mtime 重读，无需重启；需 `prompt.enabled: true`）；
   **路径**（或 `systemPrompt`）改了要重启 gateway。默认路径是 `$HERMES_HOME/SYSTEM.md`，
