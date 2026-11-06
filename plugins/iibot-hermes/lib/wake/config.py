@@ -197,26 +197,17 @@ class Config:
 
     @classmethod
     def from_ctx(cls, ctx: Any) -> "Config":
-        raw: dict[str, Any] = {}
-        get = getattr(ctx, "get_config", None)
-        for key in (
-            "enabled", "apiUrl", "inboxId", "channels", "adapterTokenFile", "wakeMode",
-            "wakeProfile", "summaryEnabled", "summaryMaxItems", "summaryMaxTitleChars",
-            "summaryMaxTotalChars", "wakeContent", "wakeContentMaxChars",
-            "wakeContentTotalChars", "pushMode", "pushGraceMs", "firstRunGuide", "firstRunGuideText",
-            "debounceMs", "heartbeatTimeoutSeconds",
-            "reconnectBaseMs", "reconnectMaxMs", "wakeBackoffBaseMs", "wakeBackoffMaxMs", "wakeRetrySeconds",
-            "requestTimeoutMs", "maxBindings", "maxBindingsPerInbox", "autoBind", "sseReadTimeoutSeconds", "pollSeconds",
-            "programTools", "programToolsRequired",
-        ):
-            if not callable(get):
-                break
-            try:
-                value = get(key, None)
-            except Exception:
-                continue
-            if value is not None:
-                raw[key] = value
+        """``plugins.entries.iibot-hermes.settings.inbox`` (legacy ``inbox-wake`` fallback).
+
+        The section is read as one mapping; the legacy entry is handled by
+        ``lib/settings.py`` so every section follows the same migration rule.
+        """
+        try:
+            from ..settings import load_section
+
+            raw: dict[str, Any] = dict(load_section(ctx, "inbox"))
+        except Exception:  # settings trouble must not stop the tools from registering
+            raw = {}
         return cls.from_mapping(raw)
 
     def backoff_ms(self, attempts: int) -> int:

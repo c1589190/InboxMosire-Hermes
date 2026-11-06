@@ -1,0 +1,214 @@
+name: iibot-hermes
+version: "1.0.0"
+description: "iiBot 在 Hermes 上的唯一插件：InboxMosire 唤醒适配器（SSE 游标 + 绑定会话唤醒、有界不可信摘要、占用租约、inbox.push 正文逐字注入并立即 ack、首条工作区引导、4 个 inbox_adapter_* 工具 + /inbox 命令）+ 极简 system prompt（一句常量或操作者 md 文件，走公开 llm_request 中间件，默认关闭——宿主 agent.system_prompt_override 优先）+ 人设契约注入（角色行 + PERSONA.md 合成一条 pre_llm_call 注入、hash 去重、压缩后重锚、缺文件封禁外发；默认关闭，D-009）。业务 inbox 工具（list/claim/push/complete/rest）仍留在 InboxMosire MCP 服务器。1.0.0 由 inbox-wake 0.3.1 + minimal-system 0.2.1 + persona-mode 0.2.0 合并；旧插件目录必须删除，否则同进程双重注册。"
+author: "c1589190"
+manifest_version: 2
+api_version: 1
+license: "MIT"
+homepage: "https://github.com/c1589190/InboxMosire-Hermes"
+tags: ["inbox", "wake", "sse", "notifications", "inboxmosire", "system-prompt", "minimal", "persona", "guard", "iibot"]
+provides_hooks:
+  - pre_llm_call
+  - pre_tool_call
+  - post_llm_call
+  - post_tool_call
+  - on_session_end
+  - on_session_reset
+  - on_session_delete
+  - on_session_finalize
+provides_tools:
+  - inbox_adapter_status
+  - inbox_adapter_bind
+  - inbox_adapter_unbind
+  - inbox_adapter_log
+config_keys:
+  - plugins.entries.iibot-hermes.settings.inbox.enabled
+  - plugins.entries.iibot-hermes.settings.inbox.apiUrl
+  - plugins.entries.iibot-hermes.settings.inbox.inboxId
+  - plugins.entries.iibot-hermes.settings.inbox.channels
+  - plugins.entries.iibot-hermes.settings.inbox.adapterTokenFile
+  - plugins.entries.iibot-hermes.settings.inbox.wakeMode
+  - plugins.entries.iibot-hermes.settings.inbox.wakeProfile
+  - plugins.entries.iibot-hermes.settings.inbox.summaryEnabled
+  - plugins.entries.iibot-hermes.settings.inbox.summaryMaxItems
+  - plugins.entries.iibot-hermes.settings.inbox.summaryMaxTitleChars
+  - plugins.entries.iibot-hermes.settings.inbox.summaryMaxTotalChars
+  - plugins.entries.iibot-hermes.settings.inbox.wakeContent
+  - plugins.entries.iibot-hermes.settings.inbox.wakeContentMaxChars
+  - plugins.entries.iibot-hermes.settings.inbox.wakeContentTotalChars
+  - plugins.entries.iibot-hermes.settings.inbox.debounceMs
+  - plugins.entries.iibot-hermes.settings.inbox.heartbeatTimeoutSeconds
+  - plugins.entries.iibot-hermes.settings.inbox.sseReadTimeoutSeconds
+  - plugins.entries.iibot-hermes.settings.inbox.pollSeconds
+  - plugins.entries.iibot-hermes.settings.inbox.reconnectBaseMs
+  - plugins.entries.iibot-hermes.settings.inbox.reconnectMaxMs
+  - plugins.entries.iibot-hermes.settings.inbox.wakeBackoffBaseMs
+  - plugins.entries.iibot-hermes.settings.inbox.wakeBackoffMaxMs
+  - plugins.entries.iibot-hermes.settings.inbox.requestTimeoutMs
+  - plugins.entries.iibot-hermes.settings.inbox.maxBindings
+  - plugins.entries.iibot-hermes.settings.inbox.maxBindingsPerInbox
+  - plugins.entries.iibot-hermes.settings.inbox.autoBind
+  - plugins.entries.iibot-hermes.settings.inbox.programTools
+  - plugins.entries.iibot-hermes.settings.inbox.programToolsRequired
+  - plugins.entries.iibot-hermes.settings.inbox.pushMode
+  - plugins.entries.iibot-hermes.settings.inbox.pushGraceMs
+  - plugins.entries.iibot-hermes.settings.inbox.firstRunGuide
+  - plugins.entries.iibot-hermes.settings.inbox.firstRunGuideText
+  - plugins.entries.iibot-hermes.settings.prompt.enabled
+  - plugins.entries.iibot-hermes.settings.prompt.systemPrompt
+  - plugins.entries.iibot-hermes.settings.prompt.systemPromptFile
+  - plugins.entries.iibot-hermes.settings.prompt.logRewrite
+  - plugins.entries.iibot-hermes.settings.persona.enabled
+  - plugins.entries.iibot-hermes.settings.persona.personaFile
+  - plugins.entries.iibot-hermes.settings.persona.maxChars
+  - plugins.entries.iibot-hermes.settings.persona.outboundGuard
+  - plugins.entries.iibot-hermes.settings.persona.outboundTools
+  - plugins.entries.iibot-hermes.settings.persona.denyTools
+  - plugins.entries.iibot-hermes.allow_gateway_injection
+config_schema:
+  # 注意：Hermes 的 manifest 只认 `provides_hooks`（`hermes_cli/plugins_manifest.py:32-39` 的
+  # `_KNOWN_MANIFEST_FIELDS`），`llm_request` 是中间件不是 hook，没有可声明的字段；
+  # 写成 `provides_middleware` 只会让宿主每轮告警 "unknown manifest field(s) ignored"。
+  inbox.enabled:
+    type: bool
+    label: 启用 inbox 唤醒
+    description: "关闭后不建立任何 SSE 连接（已绑定会话保留状态）。"
+  inbox.apiUrl:
+    type: str
+    label: InboxMosire API 地址
+    description: "默认回环地址；改写前确认不要指向公网。"
+  inbox.inboxId:
+    type: str
+    label: 默认 inbox
+  inbox.channels:
+    type: list
+    label: 默认订阅通道
+    description: "空列表表示订阅该 inbox 的全部通道。"
+  inbox.adapterTokenFile:
+    type: str
+    label: adapter token 文件
+    description: "指向一个 0600 权限的文件，内容为 Bearer token；token 不写进 config.yaml。"
+  inbox.wakeMode:
+    type: str
+    label: 唤醒模式（view-ack 默认 / claim）
+  inbox.wakeProfile:
+    type: str
+    label: 唤醒文案档（generic / iibot）
+  inbox.summaryEnabled:
+    type: bool
+    label: 唤醒时附带有界摘要
+  inbox.summaryMaxItems:
+    type: int
+    label: 摘要/正文最多条目数（1-50，默认 20；服务端按 priority DESC 排序）
+  inbox.summaryMaxTitleChars:
+    type: int
+    label: 摘要行标题最多字符数（8-400，默认 120）
+  inbox.summaryMaxTotalChars:
+    type: int
+    label: 摘要块总预算（120-20000，默认 6000）
+  inbox.wakeContent:
+    type: str
+    label: 唤醒正文策略（off / bounded / full）
+    description: "bounded/full 会把每条条目的正文渲染进唤醒消息（按 service 的 priority DESC 顺序），目标是一次给够、不再补调 read。"
+  inbox.wakeContentMaxChars:
+    type: int
+    label: 单条正文最多字符数（80-100000，默认 12000）
+  inbox.wakeContentTotalChars:
+    type: int
+    label: 正文段总预算（200-200000，默认 30000）
+  inbox.debounceMs:
+    type: int
+    label: 事件去抖（毫秒）
+  inbox.heartbeatTimeoutSeconds:
+    type: int
+    label: SSE 心跳超时（秒）
+  inbox.requestTimeoutMs:
+    type: int
+    label: HTTP 请求超时（毫秒）
+  inbox.maxBindings:
+    type: int
+    label: 同时绑定的会话上限
+  inbox.maxBindingsPerInbox:
+    type: int
+    label: 同一 inbox 的活跃绑定上限
+    description: "超出的绑定降级为 passive（不订阅、不唤醒）；显式绑定优先。"
+  inbox.programTools:
+    type: list
+    label: 唤醒前必须存在的程序 MCP 工具
+    description: "留空则按 wakeProfile 选组（generic→inbox_list；iibot→qq_conversation_read）。缺 required 时不唤醒，只记 wake.skipped。"
+  inbox.programToolsRequired:
+    type: bool
+    label: 强制检查程序 MCP 工具
+    description: "关闭后退回旧行为（工具缺失也唤醒）。"
+  inbox.pushMode:
+    type: str
+    default: "auto"
+    label: inbox.push 投递模式（auto / immediate）
+    description: "auto=等 pushGraceMs 内的 turn 结束再投；immediate=收到即投。"
+  inbox.pushGraceMs:
+    type: int
+    default: 2000
+    label: push 宽限期（毫秒）
+    description: "auto 模式下等当前 turn 结束的最长时间。"
+  inbox.firstRunGuide:
+    type: bool
+    default: true
+    label: 首条消息附带工作区引导
+    description: "每个会话第一条推送附带工作区说明；之后不再附。"
+  inbox.firstRunGuideText:
+    type: str
+    default: ""
+    label: 首条引导自定义文案
+    description: "留空使用内置模板。"
+  inbox.autoBind:
+    type: bool
+    default: false
+    label: 会话首次出现时自动绑定默认 inbox
+  prompt.enabled:
+    type: bool
+    default: false
+    label: 启用极简 system prompt（默认关闭）
+    description: "0.x 的 minimal-system 默认开；1.0.0 起默认关：宿主的 agent.system_prompt_override（patches/0001-…）与这里的 llm_request 中间件二选一，同时开会让两处互相覆盖。打开后整段替换出站 system prompt。"
+  prompt.systemPrompt:
+    type: str
+    default: You are a helpful software engineer assistant.
+    label: 系统提示词全文
+    description: "整段替换；每轮发送的字节必须完全一致，否则前缀缓存失效。systemPromptFile 命中时本项只作回落。"
+  prompt.systemPromptFile:
+    type: str
+    default: ""
+    label: 系统提示词文件（md/纯文本）
+    description: "非空且可读时整段替换 system prompt，优先级高于 systemPrompt。留空 = $HERMES_HOME/SYSTEM.md；文件按 mtime 缓存，改文件即时生效；缺失/不可读/为空时回落到 systemPrompt。"
+  prompt.logRewrite:
+    type: bool
+    default: false
+    label: 记录每次替换的字数变化
+    description: "排查用；只记长度和形状，不记内容，也不含任何凭据。"
+  persona.enabled:
+    type: bool
+    default: false
+    label: 启用人设契约注入（默认关闭，D-009）
+    description: "0.x 的 persona-mode 默认开；1.0.0 按 D-009 默认关。打开后行为与 persona-mode 0.2.0 一致：角色行 + PERSONA.md 合成一条 pre_llm_call 注入，并按需注册 pre_tool_call 守卫。"
+  persona.personaFile:
+    type: str
+    default: "PERSONA.md"
+    label: 人设文件路径
+    description: "绝对路径，或相对调用会话的工作目录。"
+  persona.maxChars:
+    type: int
+    default: 4000
+    label: 注入契约正文上限（字符）
+    description: "超长截断并打标记。"
+  persona.outboundGuard:
+    type: bool
+    default: true
+    label: 人设文件缺失时封禁外发聊天工具
+  persona.outboundTools:
+    type: list
+    default: ["qq_conversation_send", "conversation_send"]
+    label: 缺失时封禁的外发工具（后缀匹配，含 MCP 前缀）
+  persona.denyTools:
+    type: list
+    default: []
+    label: 工具收窄列表（后缀匹配）
+    description: "空 = 不收窄；填满等价 DSH 的 Minimal toolset。"

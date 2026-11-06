@@ -11,11 +11,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _loader  # noqa: E402
 
-plugin = _loader.load_package(
-    "minimal_system_plugin", _loader.ROOT / "plugins" / "minimal-system"
-)
-rewrite = sys.modules["minimal_system_plugin.lib.rewrite"]
-prompt_file = sys.modules["minimal_system_plugin.lib.prompt_file"]
+plugin = _loader.prompt_plugin()
+rewrite = _loader.prompt_lib("rewrite")
+prompt_file = _loader.prompt_lib("prompt_file")
 
 TEXT = plugin.DEFAULT_SYSTEM_PROMPT
 
@@ -126,7 +124,9 @@ class RewriteTests(unittest.TestCase):
 
 class RegisterTests(unittest.TestCase):
     def _ctx(self, **config) -> object:
-        ctx = _loader.FakeCtx(dict(config))
+        # prompt.enabled 默认 false（1.0.0）：这些用例测的是中间件本身，显式打开。
+        config.setdefault("enabled", True)
+        ctx = _loader.FakeCtx({"prompt": dict(config)})
         plugin.register(ctx)
         return ctx
 
@@ -149,8 +149,9 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual(result["reason"], "system:messages")
 
     def test_hook_can_be_disabled(self) -> None:
+        # 关闭时根本不注册中间件（不是注册后返回 None）——宿主的 system prompt 保持原样。
         ctx = self._ctx(enabled=False)
-        self.assertIsNone(self._hook(ctx)(request=chat_request(), api_mode="chat_completions"))
+        self.assertNotIn("llm_request", ctx.middleware)
 
     def test_hook_honours_a_custom_prompt(self) -> None:
         ctx = self._ctx(systemPrompt="You are 大肥鱼.")
@@ -187,7 +188,8 @@ class PromptFileTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _hook(self, **config):
-        ctx = _loader.FakeCtx(dict(config))
+        config.setdefault("enabled", True)
+        ctx = _loader.FakeCtx({"prompt": dict(config)})
         plugin.register(ctx)
         return ctx.middleware["llm_request"][0]
 
@@ -266,7 +268,8 @@ class DefaultPathTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _system(self, **config) -> str:
-        ctx = _loader.FakeCtx(dict(config))
+        config.setdefault("enabled", True)
+        ctx = _loader.FakeCtx({"prompt": dict(config)})
         plugin.register(ctx)
         hook = ctx.middleware["llm_request"][0]
         out = hook(request=chat_request(), api_mode="chat_completions")

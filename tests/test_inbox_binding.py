@@ -648,7 +648,7 @@ class LocalSessionDeferTests(Base):
         self._seed_local()
         self.inject_ok = False
         self.inject_error = (
-            "注入被宿主拒绝：确认 config.yaml 里 plugins.entries.inbox-wake.allow_gateway_injection: "
+            "注入被宿主拒绝：确认 config.yaml 里 plugins.entries.iibot-hermes.allow_gateway_injection: "
             "true，且该 session key 仍然存在"
         )
         self.fake.status_payload = {"revision": 9, "available": 1}

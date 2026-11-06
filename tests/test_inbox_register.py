@@ -111,9 +111,11 @@ class RegisterTests(unittest.TestCase):
         binding_mod.InboxClient = FakeNetClient
         self.ctx = _loader.FakeCtx(
             {
-                "enabled": True,
-                "apiUrl": "http://127.0.0.1:18765",
-                "adapterTokenFile": f"file:{self.token_path}",
+                "inbox": {
+                    "enabled": True,
+                    "apiUrl": "http://127.0.0.1:18765",
+                    "adapterTokenFile": f"file:{self.token_path}",
+                }
             }
         )
         plugin.register(self.ctx)
@@ -245,7 +247,7 @@ class RegisterTests(unittest.TestCase):
 
 class NoTokenConfigTests(unittest.TestCase):
     def test_bind_without_any_token_reference_reports_token_missing(self):
-        ctx = _loader.FakeCtx({"enabled": False})
+        ctx = _loader.FakeCtx({"inbox": {"enabled": False}})
         plugin.register(ctx)
         try:
             raw = ctx.tools["inbox_adapter_bind"]["handler"]({"inboxId": "main"}, session_key=KEY)
@@ -259,7 +261,7 @@ class NoTokenConfigTests(unittest.TestCase):
 
 class DisabledConfigTests(unittest.TestCase):
     def test_disabled_plugin_registers_but_does_not_resume(self):
-        ctx = _loader.FakeCtx({"enabled": False})
+        ctx = _loader.FakeCtx({"inbox": {"enabled": False}})
         plugin.register(ctx)
         self.assertEqual(len(ctx.tools), 4)
         self.assertIsNotNone(ctx.unload)

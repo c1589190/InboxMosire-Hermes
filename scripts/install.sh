@@ -23,17 +23,15 @@ WAKE_MODE="${WAKE_MODE:-claim}"           # claim | view-ack
 WAKE_PROFILE="${WAKE_PROFILE:-generic}"   # generic | iibot
 PERSONA_FILE="${PERSONA_FILE:-}"
 SYSTEM_PROMPT_FILE="${SYSTEM_PROMPT_FILE:-}"
+PROMPT_ENABLED="${PROMPT_ENABLED:-0}"     # 1 = 中间件接管 system prompt（与 agent.system_prompt_override 二选一）
+PERSONA_ENABLED="${PERSONA_ENABLED:-0}"   # 1 = 恢复 persona 注入（D-009 之后默认关）
 TOKEN_PATH="${TOKEN_PATH:-$HERMES_HOME_DIR/inbox-mosire/api-token}"
 LOCAL_SRC=""
 ACTION="${1:-all}"
-# 2026-11-06（D-009）起取消人设注入：默认只装 inbox-wake + minimal-system。
-# 仍要 old school persona 注入的，显式 WITH_PERSONA=1 跑本脚本。
-WITH_PERSONA="${WITH_PERSONA:-0}"
-if [ "$WITH_PERSONA" = "1" ]; then
-  PLUGIN_IDS=(persona-mode inbox-wake minimal-system)
-else
-  PLUGIN_IDS=(inbox-wake minimal-system)
-fi
+# 1.0.0：inbox-wake + minimal-system + persona-mode 合并为唯一插件 iibot-hermes。
+PLUGIN_IDS=(iibot-hermes)
+# 旧目录必须消失：同进程里若同时加载新旧插件，工具/hook/命令会双重注册。
+LEGACY_PLUGIN_IDS=(inbox-wake minimal-system persona-mode)
 
 log()  { printf '\033[36m›\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
@@ -52,11 +50,24 @@ wait_gateway_stopped() {
   fi
 }
 
-# ---- 1. 安装两个插件 -------------------------------------------------------
+# ---- 1. 安装（先清旧目录，再装唯一的 iibot-hermes） -------------------------
+purge_legacy_plugins() {
+  local dir="$HERMES_HOME_DIR/plugins" id
+  for id in "${LEGACY_PLUGIN_IDS[@]}"; do
+    if [ -e "$dir/$id" ]; then
+      log "删除旧插件目录 $dir/$id（1.0.0 已合并进 iibot-hermes；留着会同进程双重注册）"
+      rm -rf "$dir/$id"
+    fi
+    # 旧 entry 仍在 config.yaml 里也无妨（只读回落），但禁用可避免宿主对缺失目录报错
+    "$HERMES_BIN" plugins disable "$id" >/dev/null 2>&1 || true
+  done
+}
+
 do_plugins() {
   need_hermes
+  purge_legacy_plugins
   if [ -n "$LOCAL_SRC" ]; then
-    [ -d "$LOCAL_SRC/plugins/inbox-wake" ] || die "本地路径里没有 plugins/inbox-wake: $LOCAL_SRC"
+    [ -d "$LOCAL_SRC/plugins/iibot-hermes" ] || die "本地路径里没有 plugins/iibot-hermes: $LOCAL_SRC"
     mkdir -p "$HERMES_HOME_DIR/plugins"
     for id in "${PLUGIN_IDS[@]}"; do
       log "复制 $id → $HERMES_HOME_DIR/plugins/$id"
@@ -110,46 +121,55 @@ set_cfg() {
   ok "$1 = $2"
 }
 
+bool_of() { [ "$1" = "1" ] && printf 'true' || printf 'false'; }
+
 do_settings() {
   need_hermes
-  if [ "$WITH_PERSONA" = "1" ]; then
-  log "写入 persona-mode 设置（WITH_PERSONA=1）"
-  set_cfg "plugins.entries.persona-mode.settings.enabled" "true"
-  if [ -n "$PERSONA_FILE" ]; then
-    set_cfg "plugins.entries.persona-mode.settings.personaFile" "$PERSONA_FILE"
+  local base="plugins.entries.iibot-hermes.settings"
+
+  log "写入 inbox 设置"
+  set_cfg "$base.inbox.enabled" "true"
+  set_cfg "$base.inbox.apiUrl" "$INBOX_API_URL"
+  set_cfg "$base.inbox.inboxId" "$INBOX_ID"
+  set_cfg "$base.inbox.adapterTokenFile" "file:$TOKEN_PATH"
+  set_cfg "$base.inbox.wakeMode" "$WAKE_MODE"
+  set_cfg "$base.inbox.wakeProfile" "$WAKE_PROFILE"
+  log "写入推送模式设置"
+  set_cfg "$base.inbox.pushMode" "auto"
+  set_cfg "$base.inbox.pushGraceMs" "2000"
+  set_cfg "$base.inbox.firstRunGuide" "true"
+  # 关键开关：没有它，gateway 会话里的唤醒会被宿主拒绝（inject_message 返回 False）。
+  # 它是一级 entry 键（不在 settings 里），旧位置 plugins.entries.inbox-wake.allow_gateway_injection 不再生效。
+  set_cfg "plugins.entries.iibot-hermes.allow_gateway_injection" "true"
+
+  log "写入 prompt 设置（prompt.enabled 默认 false）"
+  set_cfg "$base.prompt.enabled" "$(bool_of "$PROMPT_ENABLED")"
+  if [ "$PROMPT_ENABLED" = "1" ]; then
+    set_cfg "$base.prompt.systemPrompt" "You are a helpful software engineer assistant."
+    if [ -n "$SYSTEM_PROMPT_FILE" ]; then
+      # 文件优先于上面那句常量；内容热更新（改文件不用重启），路径改了才要重启
+      set_cfg "$base.prompt.systemPromptFile" "$SYSTEM_PROMPT_FILE"
+    else
+      warn "未提供 SYSTEM_PROMPT_FILE；system prompt 读 \$HERMES_HOME/SYSTEM.md，没有就回落上面那句常量。"
+      warn "  放别处时：$HERMES_BIN config set --force $base.prompt.systemPromptFile /abs/path/SYSTEM.md"
+    fi
   else
-    warn "未提供 PERSONA_FILE；插件默认读当前会话工作目录下的 PERSONA.md。如需固定路径："
-    warn "  $HERMES_BIN config set --force plugins.entries.persona-mode.settings.personaFile /abs/path/PERSONA.md"
-  fi
-  else
-    log "跳过 persona-mode（D-009：人设改由首条 inbox 注入引导读 AGENTS.md / PERSONA.md）"
-    set_cfg "plugins.entries.persona-mode.settings.enabled" "false"
+    warn "prompt.enabled=false：system prompt 交给宿主的 agent.system_prompt_override（见 docs/HOST-PATCH.md）。"
+    warn "  要改用插件内的一句式提示词：PROMPT_ENABLED=1 重跑本步，或 $HERMES_BIN config set --force $base.prompt.enabled true"
   fi
 
-  log "写入 inbox-wake 设置"
-  set_cfg "plugins.entries.inbox-wake.settings.enabled" "true"
-  set_cfg "plugins.entries.inbox-wake.settings.apiUrl" "$INBOX_API_URL"
-  set_cfg "plugins.entries.inbox-wake.settings.inboxId" "$INBOX_ID"
-  set_cfg "plugins.entries.inbox-wake.settings.adapterTokenFile" "file:$TOKEN_PATH"
-  set_cfg "plugins.entries.inbox-wake.settings.wakeMode" "$WAKE_MODE"
-  set_cfg "plugins.entries.inbox-wake.settings.wakeProfile" "$WAKE_PROFILE"
-  log "写入 minimal-system 设置（一句式 system prompt）"
-  set_cfg "plugins.entries.minimal-system.settings.enabled" "true"
-  set_cfg "plugins.entries.minimal-system.settings.systemPrompt" \
-    "You are a helpful software engineer assistant."
-  if [ -n "$SYSTEM_PROMPT_FILE" ]; then
-    # 文件优先于上面那句常量；内容热更新（改文件不用重启），路径改了才要重启
-    set_cfg "plugins.entries.minimal-system.settings.systemPromptFile" "$SYSTEM_PROMPT_FILE"
+  log "写入 persona 设置（persona.enabled 默认 false，D-009）"
+  set_cfg "$base.persona.enabled" "$(bool_of "$PERSONA_ENABLED")"
+  if [ "$PERSONA_ENABLED" = "1" ]; then
+    if [ -n "$PERSONA_FILE" ]; then
+      set_cfg "$base.persona.personaFile" "$PERSONA_FILE"
+    else
+      warn "未提供 PERSONA_FILE；插件默认读当前会话工作目录下的 PERSONA.md。如需固定路径："
+      warn "  $HERMES_BIN config set --force $base.persona.personaFile /abs/path/PERSONA.md"
+    fi
   else
-    warn "未提供 SYSTEM_PROMPT_FILE；system prompt 读 \$HERMES_HOME/SYSTEM.md，没有就回落上面那句常量。"
-    warn "  放别处时：$HERMES_BIN config set --force plugins.entries.minimal-system.settings.systemPromptFile /abs/path/SYSTEM.md"
+    warn "persona.enabled=false：人设改由首条 inbox 注入引导读 AGENTS.md / PERSONA.md（D-009）。"
   fi
-  log "写入推送模式设置（0.3.0 起）"
-  set_cfg "plugins.entries.inbox-wake.settings.pushMode" "auto"
-  set_cfg "plugins.entries.inbox-wake.settings.pushGraceMs" "2000"
-  set_cfg "plugins.entries.inbox-wake.settings.firstRunGuide" "true"
-  # 关键开关：没有它，gateway 会话里的唤醒会被宿主拒绝（inject_message 返回 False）
-  set_cfg "plugins.entries.inbox-wake.allow_gateway_injection" "true"
   ok "设置写入完成"
 }
 
@@ -160,6 +180,10 @@ do_check() {
   log "运行时契约校验（doctor）"
   for id in "${PLUGIN_IDS[@]}"; do
     "$HERMES_BIN" plugins doctor "$id" --ci || warn "$id doctor 报了问题，见上面的输出"
+  done
+  local dir="$HERMES_HOME_DIR/plugins" id
+  for id in "${LEGACY_PLUGIN_IDS[@]}"; do
+    [ -e "$dir/$id" ] && warn "旧插件目录仍存在：$dir/$id —— 必须删除，否则同进程双重注册（./scripts/install.sh plugins 会先删）"
   done
   log "InboxMosire 连通性"
   if command -v curl >/dev/null 2>&1; then

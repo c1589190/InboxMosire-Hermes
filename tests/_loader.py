@@ -1,13 +1,23 @@
-"""Import helpers: the plugin directories are hyphenated, so they are loaded as synthetic packages."""
+"""Import helpers: the plugin directory is hyphenated, so it is loaded as a synthetic package.
+
+1.0.0 merged ``inbox-wake`` + ``minimal-system`` + ``persona-mode`` into the single
+``plugins/iibot-hermes`` package; it is imported once as ``iibot_hermes_plugin`` and the
+old helper names (``inbox_plugin`` / ``persona_plugin`` / ``inbox_lib``) are thin aliases
+so a test only has to change *where* it asks, not how.
+"""
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+PLUGIN_ID = "iibot-hermes"
+PACKAGE = "iibot_hermes_plugin"
+PLUGIN_DIR = ROOT / "plugins" / PLUGIN_ID
 
 
 def load_package(module_name: str, directory: Path) -> Any:
@@ -22,17 +32,46 @@ def load_package(module_name: str, directory: Path) -> Any:
     return module
 
 
+def plugin() -> Any:
+    """The merged plugin package (``plugins/iibot-hermes``)."""
+    existing = sys.modules.get(PACKAGE)
+    if existing is not None:
+        return existing
+    return load_package(PACKAGE, PLUGIN_DIR)
+
+
+#: Old call sites keep working: there is one plugin now.
 def persona_plugin() -> Any:
-    return load_package("persona_mode_plugin", ROOT / "plugins" / "persona-mode")
+    return plugin()
 
 
 def inbox_plugin() -> Any:
-    return load_package("inbox_wake_plugin", ROOT / "plugins" / "inbox-wake")
+    return plugin()
+
+
+def prompt_plugin() -> Any:
+    return plugin()
 
 
 def inbox_lib(name: str) -> Any:
-    inbox_plugin()  # ensure the parent package is imported first
-    return importlib.import_module(f"inbox_wake_plugin.lib.{name}")
+    """``inbox_wake_plugin.lib.<name>`` -> ``iibot_hermes_plugin.lib.wake.<name>``."""
+    plugin()  # ensure the parent package is imported first
+    return importlib.import_module(f"{PACKAGE}.lib.wake.{name}")
+
+
+def prompt_lib(name: str) -> Any:
+    plugin()
+    return importlib.import_module(f"{PACKAGE}.lib.prompt.{name}")
+
+
+def persona_lib(name: str) -> Any:
+    plugin()
+    return importlib.import_module(f"{PACKAGE}.lib.persona.{name}")
+
+
+def settings_lib() -> Any:
+    plugin()
+    return importlib.import_module(f"{PACKAGE}.lib.settings")
 
 
 class MemState:
@@ -49,10 +88,27 @@ class MemState:
 
 
 class FakeCtx:
-    """Just enough of ``PluginContext`` to exercise ``register()``."""
+    """Just enough of ``PluginContext`` to exercise ``register()``.
 
-    def __init__(self, config: dict | None = None, accept_injection: bool = True) -> None:
-        self.config = config or {}
+    ``settings`` is the plugin's own subtree — ``plugins.entries.iibot-hermes.settings`` —
+    and ``get_config`` resolves dotted keys through it exactly like the host does
+    (``hermes_cli/plugins.py:266``). ``legacy`` holds the 0.x entries
+    (``{"inbox-wake": {...}, "minimal-system": {...}, "persona-mode": {...}}``) and is
+    exposed through ``load_host_config()``, the surface ``lib/settings.py`` uses for the
+    read-only legacy fallback. ``entries`` sets non-settings keys on this plugin's entry
+    (``allow_gateway_injection``) or whole legacy entries verbatim.
+    """
+
+    def __init__(
+        self,
+        settings: dict | None = None,
+        accept_injection: bool = True,
+        legacy: dict[str, dict] | None = None,
+        entries: dict[str, dict] | None = None,
+    ) -> None:
+        self.settings: dict[str, Any] = dict(settings or {})
+        self.legacy: dict[str, dict] = dict(legacy or {})
+        self.entries: dict[str, dict] = dict(entries or {})
         self.accept_injection = accept_injection
         self.state = MemState()
         self.tools: dict[str, dict] = {}
@@ -62,11 +118,33 @@ class FakeCtx:
         self.sections: list[tuple[str, Any, dict]] = []
         self.injected: list[tuple[str, str]] = []
         self.unload: Any = None
-        self.plugin_id = "test-plugin"
+        self.plugin_id = PLUGIN_ID
 
+    # -- host surfaces -------------------------------------------------------------
     def get_config(self, key: str, default: Any = None) -> Any:
-        return self.config.get(key, default)
+        node: Any = self.settings
+        for part in str(key).split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
 
+    def load_host_config(self) -> dict:
+        entries: dict[str, Any] = {
+            legacy_id: {"settings": dict(values)}
+            for legacy_id, values in self.legacy.items()
+        }
+        own = dict(self.entries.get(PLUGIN_ID) or {})
+        settings = dict(own.pop("settings", {}))
+        settings.update(self.settings)
+        own["settings"] = settings
+        entries[PLUGIN_ID] = own
+        for legacy_id, entry in self.entries.items():
+            if legacy_id != PLUGIN_ID:
+                entries[legacy_id] = dict(entry)
+        return {"plugins": {"entries": entries}}
+
+    # -- registration surfaces -----------------------------------------------------
     def register_tool(self, **kwargs: Any) -> None:
         self.tools[kwargs["name"]] = kwargs
 

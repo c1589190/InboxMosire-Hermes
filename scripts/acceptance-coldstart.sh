@@ -64,7 +64,7 @@ case "${1:-probe}" in
   watch)
     [ -r "$HERMES_LOG" ] || { say "读不到 $HERMES_LOG"; exit 2; }
     say "跟踪 program-tools-missing / wake.ok / wake.skipped（Ctrl-C 结束）"
-    tail -f "$HERMES_LOG" | grep --line-buffered -E "program-tools-missing|wake\.ok|wake\.skipped|inbox-wake: loaded"
+    tail -f "$HERMES_LOG" | grep --line-buffered -E "program-tools-missing|wake\.ok|wake\.skipped|inbox-wake: loaded|iibot-hermes: effective settings"
     ;;
   all)
     probe; say "停 iiBot…"; "$BOT_DIR/start-bot.sh" stop >/dev/null 2>&1; probe

@@ -402,7 +402,7 @@ class AttachmentTests(Base):
         self.seed()  # self._inject raises TypeError on any kwarg
         good = Path(self._tmp.name) / "chart.png"
         good.write_bytes(b"png")
-        with self.assertLogs("inbox_wake_plugin", level="WARNING") as logs:
+        with self.assertLogs("iibot_hermes_plugin", level="WARNING") as logs:
             self.dispatch(envelope(attachments=[{"name": "chart.png", "ref": str(good)}]))
         self.assertEqual(len(self.injected), 1)
         self.assertEqual(self.injected[0][0], PUSH_TEXT)

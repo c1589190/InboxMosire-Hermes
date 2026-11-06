@@ -2,8 +2,8 @@
 # 把本仓库的插件同步到 HERMES_HOME/plugins，供「已装过旧版，要升级」的场景使用。
 #
 #   ./scripts/sync-plugins.sh --dry-run              # 只报告会改什么
-#   ./scripts/sync-plugins.sh                        # 复制 persona-mode / inbox-wake / minimal-system
-#   ./scripts/sync-plugins.sh --only inbox-wake      # 只同步一个
+#   ./scripts/sync-plugins.sh                        # 复制 iibot-hermes，并删掉 0.x 的三个旧目录
+#   ./scripts/sync-plugins.sh --only iibot-hermes    # 只同步一个（现在只有一个）
 #   ./scripts/sync-plugins.sh --target /home/ops/.hermes
 #   ./scripts/sync-plugins.sh --restart              # 复制后停+起 gateway（远程部署常用）
 #
@@ -13,7 +13,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
-PLUGIN_IDS=(persona-mode inbox-wake minimal-system)
+PLUGIN_IDS=(iibot-hermes)
+# 1.0.0 合并前的目录：留着会同进程双重注册，复制后一律删除。
+LEGACY_PLUGIN_IDS=(inbox-wake minimal-system persona-mode)
 ONLY=""
 DRY_RUN=0
 RESTART=0
@@ -45,6 +47,14 @@ version_of() {  # $1 = plugin.yaml
 
 log "源仓库：$ROOT（$SRC_REV）→ 目标：$TARGET_DIR"
 [ -d "$TARGET_DIR" ] || die "目标没有 plugins 目录：$TARGET_DIR（先跑 scripts/install.sh）"
+
+# 先清 0.x 的三个旧目录（同进程同时加载新旧插件 = 工具/hook/命令双重注册）
+for legacy_id in "${LEGACY_PLUGIN_IDS[@]}"; do
+  [ -e "$TARGET_DIR/$legacy_id" ] || continue
+  log "删除旧插件目录 $TARGET_DIR/$legacy_id（已合并进 iibot-hermes）"
+  [ "$DRY_RUN" = "1" ] && continue
+  rm -rf "$TARGET_DIR/$legacy_id"
+done
 
 for id in "${PLUGIN_IDS[@]}"; do
   [ -z "$ONLY" ] || [ "$ONLY" = "$id" ] || continue

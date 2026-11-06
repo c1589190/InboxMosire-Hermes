@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 一键升级 inbox-wake 插件（以及同仓的 minimal-system）。
+# 一键升级 iibot-hermes 插件（1.0.0 合并了 inbox-wake / minimal-system / persona-mode）。
 #
 # 两种升级路径的区别：
-#   * `hermes plugins update inbox-wake` —— 只有当初用 `hermes plugins install <repo>#...`
+#   * `hermes plugins update iibot-hermes` —— 只有当初用 `hermes plugins install <repo>#...`
 #     装过、宿主记下了 provenance 的插件才有效；
 #   * 本脚本 —— 对 `cp -a` / `sync-plugins.sh` 装进来的插件同样有效：按 git ref 取一份干净
 #     副本整目录替换，备份、清 __pycache__、语法自检、重启 gateway、打印版本与配置键。
@@ -21,8 +21,10 @@ set -euo pipefail
 REPO_SLUG="${REPO_SLUG:-git@github.com:c1589190/InboxMosire-Hermes.git}"
 HERMES_BIN="${HERMES_BIN:-hermes}"
 HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
-PLUGIN_IDS=(inbox-wake minimal-system)
-DEFAULT_REF="${DEFAULT_REF:-Alpha20261106}"
+PLUGIN_IDS=(iibot-hermes)
+# 1.0.0 合并前的目录：替换前必须删除，否则同进程里新旧插件会把工具/hook/命令各注册一遍。
+LEGACY_PLUGIN_IDS=(inbox-wake minimal-system persona-mode)
+DEFAULT_REF="${DEFAULT_REF:-v1.0.0}"
 
 REF="$DEFAULT_REF"
 DRY_RUN=0
@@ -95,7 +97,7 @@ fi
 command -v git >/dev/null 2>&1 || die "需要 git"
 
 if git -C "$PWD" rev-parse --git-dir >/dev/null 2>&1 \
-   && [ -d "$PWD/plugins/inbox-wake" ]; then
+   && [ -d "$PWD/plugins/iibot-hermes" ]; then
   SRC_REPO="$PWD"
   log "使用当前 checkout：$SRC_REPO"
   git -C "$SRC_REPO" fetch --tags --quiet origin || warn "git fetch 失败，可能用本地已有对象继续"
@@ -118,6 +120,19 @@ log "目标版本：$REF（$(git -C "$SRC_REPO" rev-parse --short "$REF^{commit}
 
 mkdir -p "$PLUGINS_DIR"
 [ "$DRY_RUN" = "1" ] || mkdir -p "$BACKUP_DIR"
+
+# ---- 清掉 0.x 的三个旧目录 --------------------------------------------------
+for id in "${LEGACY_PLUGIN_IDS[@]}"; do
+  [ -e "$PLUGINS_DIR/$id" ] || continue
+  log "发现旧插件目录 $PLUGINS_DIR/$id（已合并进 iibot-hermes）"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run：会先备份再删除 $id"
+    continue
+  fi
+  cp -a "$PLUGINS_DIR/$id" "$BACKUP_DIR/$id-$STAMP"
+  rm -rf "$PLUGINS_DIR/$id"
+  ok "已备份并删除 $id（旧目录留着会同进程双重注册）"
+done
 
 for id in "${PLUGIN_IDS[@]}"; do
   src_rel="plugins/$id"
@@ -164,12 +179,24 @@ if command -v "$HERMES_BIN" >/dev/null 2>&1; then
     "$HERMES_BIN" config set --force "$key" "$value" >/dev/null 2>&1 \
       && ok "补配置 $key = $value" || warn "配置写入失败：$key"
   }
-  ensure_cfg "plugins.entries.inbox-wake.settings.pushMode" "auto"
-  ensure_cfg "plugins.entries.inbox-wake.settings.pushGraceMs" "2000"
-  ensure_cfg "plugins.entries.inbox-wake.settings.firstRunGuide" "true"
-  if "$HERMES_BIN" config get "plugins.entries.persona-mode.settings.enabled" 2>/dev/null | grep -qi true; then
-    warn "persona-mode 仍为启用状态；按 D-009 人设注入已取消，建议："
-    warn "  $HERMES_BIN config set --force plugins.entries.persona-mode.settings.enabled false"
+  base="plugins.entries.iibot-hermes.settings"
+  ensure_cfg "$base.inbox.pushMode" "auto"
+  ensure_cfg "$base.inbox.pushGraceMs" "2000"
+  ensure_cfg "$base.inbox.firstRunGuide" "true"
+  # 一级 entry 键（不在 settings 里）：宿主只读本插件自己的 entry，旧位置的值必须搬过来
+  legacy_gw="$("$HERMES_BIN" config get "plugins.entries.inbox-wake.allow_gateway_injection" 2>/dev/null | tr -d '[:space:]')"
+  if [ "$legacy_gw" = "true" ]; then
+    ensure_cfg "plugins.entries.iibot-hermes.allow_gateway_injection" "true"
+  fi
+  # 旧命名空间仍能被只读回落读到，但新段迟早要写；提示而不是代写（值可能被有意保留）
+  for legacy_id in "${LEGACY_PLUGIN_IDS[@]}"; do
+    if "$HERMES_BIN" config get "plugins.entries.$legacy_id.settings" >/dev/null 2>&1; then
+      warn "旧设置 plugins.entries.$legacy_id.settings 仍存在：插件只读回落（会打 WARNING）。"
+      warn "  请把需要的值写到 plugins.entries.iibot-hermes.settings.* 后删除旧段（见 docs/INSTALL.md）。"
+    fi
+  done
+  if "$HERMES_BIN" config get "plugins.entries.iibot-hermes.settings.persona.enabled" 2>/dev/null | grep -qi true; then
+    warn "persona.enabled=true：按 D-009 人设注入默认关闭；确认这是你要的。"
   fi
 fi
 
@@ -178,8 +205,8 @@ restart_gateway
 # ---- 收尾 ---------------------------------------------------------------
 echo
 ok "升级完成。核对："
-printf '  版本    : %s\n' "$(awk -F'"' '/^version:/{print $2; exit}' "$PLUGINS_DIR/inbox-wake/plugin.yaml" 2>/dev/null || echo '?')"
-printf '  插件目录: %s\n' "$PLUGINS_DIR/inbox-wake"
+printf '  版本    : %s\n' "$(awk -F'"' '/^version:/{print $2; exit}' "$PLUGINS_DIR/iibot-hermes/plugin.yaml" 2>/dev/null || echo '?')"
+printf '  插件目录: %s\n' "$PLUGINS_DIR/iibot-hermes"
 printf '  备份目录: %s\n' "$BACKUP_DIR"
 cat <<'TIP'
   日志里应看到 push.ok / push.ack / guide.sent，且不应再出现 wake.ok（那是 changed 路径）。

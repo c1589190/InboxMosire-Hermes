@@ -1,5 +1,57 @@
 # CHANGELOG
 
+## 1.0.0 (2026-11-07) —— 三合一：`plugins/iibot-hermes`
+
+**合并了什么。** `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并为唯一插件
+`plugins/iibot-hermes`（`name: iibot-hermes`，`version: "1.0.0"`）。三个目录用 `git mv` 保留历史：
+
+| 旧位置 | 新位置 |
+|---|---|
+| `plugins/inbox-wake/lib/*` | `plugins/iibot-hermes/lib/wake/*` |
+| `plugins/minimal-system/lib/*` | `plugins/iibot-hermes/lib/prompt/*` |
+| `plugins/persona-mode/lib/*` | `plugins/iibot-hermes/lib/persona/*` |
+| 三个 `__init__.py` 的 `register(ctx)` | `plugins/iibot-hermes/__init__.py`（`_register_wake` / `_register_prompt` / `_register_persona`）|
+| 三个 `plugin.yaml` | 一个 `plugins/iibot-hermes/plugin.yaml`（`provides_hooks` 取并集）|
+
+**对外契约没变。** 工具名 `inbox_adapter_status` / `inbox_adapter_bind` / `inbox_adapter_unbind` /
+`inbox_adapter_log` 与 toolset `inbox-mosire`、`/inbox` 命令、`pre_llm_call` / `post_llm_call` /
+`post_tool_call` / `on_session_end`（每轮）/ `on_session_reset` / `on_session_delete` /
+`on_session_finalize` 的语义、`inbox.push` 逐字注入 + 立即 ack + 首条引导 + `pushMode`/`pushGraceMs`
+全部照旧。
+
+**设置迁移（只读回落）。** 新位置 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}`：
+
+| 缺什么 | 回落读什么（只读，不写回） |
+|---|---|
+| `settings.inbox` | `plugins.entries.inbox-wake.settings` |
+| `settings.prompt` | `plugins.entries.minimal-system.settings` |
+| `settings.persona` | `plugins.entries.persona-mode.settings` |
+
+每次回落都会打一条 WARNING 说明新路径；新段存在时旧段被忽略（同样有 WARNING）。`allow_gateway_injection`
+仍是一级 entry 键，位置变为 `plugins.entries.iibot-hermes.allow_gateway_injection`（旧位置只在启动时告警）。
+启动多一行 `iibot-hermes: effective settings apiUrl=… inboxId=… wakeMode=… pushMode=… firstRunGuide=…
+prompt.enabled=… persona.enabled=…`（不含 token）。
+
+**两个开关默认关。** `prompt.enabled` 与 `persona.enabled` 在 1.0.0 都是 **false**（0.x 默认 true）：
+
+- `prompt.enabled=false` → 不注册 `llm_request` 中间件，system prompt 交给宿主的
+  `agent.system_prompt_override`（`patches/0001-host-system-prompt-override.patch`），两者二选一。
+- `persona.enabled=false` → 不注册 persona 的 `pre_llm_call` / `pre_tool_call`（D-009：人设注入取消，
+  人设改由首条 inbox 引导读 `AGENTS.md` / `PERSONA.md`）。
+
+**旧插件目录必须删。** 同一进程里新旧插件同时加载 = 4 个工具、`/inbox`、几个 hook 各注册一遍
+（`inbox.push` 会被投递两次）。`scripts/install.sh`、`scripts/upgrade.sh`、`scripts/sync-plugins.sh`
+现在都**先删** `$HERMES_HOME/plugins/{inbox-wake,minimal-system,persona-mode}` 再装/替换
+（upgrade/sync 会先备份到 `$HERMES_HOME/plugins/.backups/<id>-<时间戳>`）。
+
+**脚本。** `install.sh` 只装 `iibot-hermes`，删掉 `WITH_PERSONA` 分支，改为 `PROMPT_ENABLED=0` /
+`PERSONA_ENABLED=0` 环境开关（persona 变插件内开关）；`upgrade.sh` 的 `PLUGIN_IDS=(iibot-hermes)`，
+配置自检改新键路径并自动搬迁 `allow_gateway_injection`。
+
+**测试。** 215 → **231**（新增 `tests/test_consolidation.py`：旧 `inbox-wake` 回落、新 `settings.inbox`
+覆盖旧值、`persona.enabled` 默认不注册 hook、`prompt.enabled` 默认不注册 `llm_request`，外加旧
+prompt/persona 回落、`allow_gateway_injection` 搬迁告警、生效值日志行、点分/嵌套两种写法等价）。
+
 ## 0.3.1 (2026-11-06)
 
 - 新增 `scripts/upgrade.sh`：一键升级（`--ref/--latest/--dry-run/--no-restart/--rollback/--target`），

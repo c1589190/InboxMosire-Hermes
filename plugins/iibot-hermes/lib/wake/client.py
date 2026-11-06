@@ -137,7 +137,7 @@ class InboxClient:
         headers = {
             "Authorization": f"Bearer {self._auth_token()}",
             "Accept": "application/json",
-            "User-Agent": "hermes-inbox-wake/0.1",
+            "User-Agent": "hermes-iibot-hermes/1.0.0",
         }
         if extra:
             headers.update({str(k): str(v) for k, v in extra.items()})

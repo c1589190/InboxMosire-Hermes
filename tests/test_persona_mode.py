@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _loader  # noqa: E402
 
 plugin = _loader.persona_plugin()
-persona = sys.modules["persona_mode_plugin.lib.persona"]
-guard = sys.modules["persona_mode_plugin.lib.guard"]
+persona = _loader.persona_lib("persona")
+guard = _loader.persona_lib("guard")
 
 BODY = "# 大肥鱼\n\n自称本鲸。默认 1-3 句。"
 
@@ -122,15 +122,16 @@ class ContractTests(unittest.TestCase):
 
 class RegisterTests(unittest.TestCase):
     def _ctx(self, tmp: Path, **config) -> object:
-        ctx = _loader.FakeCtx(
-            {
-                "personaFile": str(tmp / "PERSONA.md"),
-                "maxChars": 4000,
-                "outboundGuard": True,
-                "denyTools": ["write_file"],
-            }
-        )
-        ctx.config.update(config)
+        # persona.enabled 默认 false（D-009）：这些用例测的是注入/守卫本身，显式打开。
+        settings = {
+            "enabled": True,
+            "personaFile": str(tmp / "PERSONA.md"),
+            "maxChars": 4000,
+            "outboundGuard": True,
+            "denyTools": ["write_file"],
+        }
+        settings.update(config)
+        ctx = _loader.FakeCtx({"persona": settings})
         plugin.register(ctx)
         return ctx
 
@@ -146,23 +147,27 @@ class RegisterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "PERSONA.md").write_text(BODY, encoding="utf-8")
             ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
-            text = ctx.hooks["pre_llm_call"][0](conversation_history=[])["context"]
+            text = ctx.hooks["pre_llm_call"][-1](conversation_history=[])["context"]
             self.assertIn("你在扮演 <persona-contract> 定义的角色", text)
             self.assertIn("自称本鲸", text)
             self.assertLess(text.index("你在扮演"), text.index("<persona-contract>"))
 
     def test_missing_companion_is_reported(self) -> None:
+        """合并后"同伴"就是同一插件的 prompt 段：它关着时角色行照注入，但提示词不极简。"""
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
-            # 宿主不提供 has_plugin（老版本/假 ctx）时保持沉默，不误报
-            with self.assertNoLogs("persona_mode_plugin", level="WARNING"):
+            with self.assertLogs("iibot_hermes_plugin", level="WARNING") as logs:
                 plugin._warn_missing_companion(ctx)
-            ctx.has_plugin = lambda name: False
-            with self.assertLogs("persona_mode_plugin", level="WARNING") as logs:
-                plugin._warn_missing_companion(ctx)
-            self.assertIn("minimal-system", "\n".join(logs.output))
-            ctx.has_plugin = lambda name: name == plugin.REQUIRED_COMPANION
-            with self.assertNoLogs("persona_mode_plugin", level="WARNING"):
+            self.assertIn("prompt.enabled", "\n".join(logs.output))
+            self.assertIn("plugins.entries.iibot-hermes.settings.prompt.enabled", "\n".join(logs.output))
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = _loader.FakeCtx(
+                {"prompt": {"enabled": True},
+                 "persona": {"enabled": True, "personaFile": str(Path(tmp) / "PERSONA.md"),
+                             "outboundGuard": False, "denyTools": []}}
+            )
+            plugin.register(ctx)
+            with self.assertNoLogs("iibot_hermes_plugin", level="WARNING"):
                 plugin._warn_missing_companion(ctx)
 
     def test_injects_contract_once_then_stays_quiet(self) -> None:
@@ -170,7 +175,7 @@ class RegisterTests(unittest.TestCase):
             path = Path(tmp) / "PERSONA.md"
             path.write_text(BODY, encoding="utf-8")
             ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
-            hook = ctx.hooks["pre_llm_call"][0]
+            hook = ctx.hooks["pre_llm_call"][-1]
             first = hook(conversation_history=[], is_first_turn=True)
             self.assertIn("context", first)
             contract_text = first["context"]
@@ -182,7 +187,7 @@ class RegisterTests(unittest.TestCase):
             path = Path(tmp) / "PERSONA.md"
             path.write_text(BODY, encoding="utf-8")
             ctx = self._ctx(Path(tmp), outboundGuard=False, denyTools=[])
-            hook = ctx.hooks["pre_llm_call"][0]
+            hook = ctx.hooks["pre_llm_call"][-1]
             hook(conversation_history=[])
             after_compaction = [{"role": "user", "content": "summary of earlier turns"}]
             self.assertIn("context", hook(conversation_history=after_compaction))
@@ -190,7 +195,7 @@ class RegisterTests(unittest.TestCase):
     def test_missing_persona_blocks_outbound_and_is_injected_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp))
-            pre_llm = ctx.hooks["pre_llm_call"][0]
+            pre_llm = ctx.hooks["pre_llm_call"][-1]
             pre_tool = ctx.hooks["pre_tool_call"][0]
             blocked = pre_tool(tool_name="mcp__iibot__qq_conversation_send", args={})
             self.assertEqual(blocked["action"], "block")
@@ -212,7 +217,7 @@ class RegisterTests(unittest.TestCase):
     def test_hook_never_raises_on_bad_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp), personaFile="", maxChars="not-a-number")
-            hook = ctx.hooks["pre_llm_call"][0]
+            hook = ctx.hooks["pre_llm_call"][-1]
             self.assertIsNotNone(hook(conversation_history=[]))
 
 
