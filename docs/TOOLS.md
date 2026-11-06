@@ -1,6 +1,8 @@
 # 工具、命令与配置
 
-插件 id：`persona-mode`、`inbox-wake`。工具名与 DSH 原版**逐字相同**，参数名同义。
+插件 id：`iibot-hermes`（Alpha20261106 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并；
+设置分 `settings.inbox` / `settings.prompt` / `settings.persona` 三段，缺段时只读回落旧命名空间）。
+工具名与 DSH 原版**逐字相同**，参数名同义。
 
 ## 1. 工具面（4 个，对齐 `InboxMosire-DSH/tools.js`）
 
@@ -65,10 +67,16 @@
 `action ∈ {bind, unbind, retry, wake, wake_failed, wake_deferred, sse_reconnect,
 start_failed, stopped, rest}`。
 
-### persona-mode 工具面
+### persona 段工具面（`persona.enabled: true` 时）
 
-不注册工具（对齐：DSH 的人设包也不提供工具）。唯一副作用是
-`pre_tool_call` 的**门禁**：`PERSONA.md` 缺失时拦截外发工具。
+不注册工具（对齐：DSH 的人设包也不提供工具）。唯一副作用是 `pre_tool_call` 的**门禁**：
+`PERSONA.md` 缺失时拦截外发工具、`denyTools` 收窄工具集。`persona.enabled` 默认 `false`（D-009），
+关闭时这个 hook 根本不存在。
+
+### prompt 段工具面（`prompt.enabled: true` 时）
+
+不注册工具、不注册 hook，只注册 `register_middleware("llm_request")` 整段替换出站 system prompt。
+默认 `false`：system prompt 交给宿主的 `agent.system_prompt_override`。
 
 ## 2. `/inbox` 命令
 
@@ -85,9 +93,14 @@ start_failed, stopped, rest}`。
 
 返回纯文本（终端/网关都渲染）；失败时返回 `失败: <code>: <message>`，不抛异常。
 
-## 3. 配置键（`plugins.entries.<id>.settings.*`）
+## 3. 配置键（`plugins.entries.iibot-hermes.settings.*`）
 
-### inbox-wake（`plugin.yaml` 的 14 个键，写在 `plugins.entries.inbox-wake.settings.*`）
+三段之一缺失时**只读回落**（并打 WARNING）：`settings.inbox` → `plugins.entries.inbox-wake.settings`；
+`settings.prompt` → `plugins.entries.minimal-system.settings`；`settings.persona` → `plugins.entries.persona-mode.settings`。
+`plugins.entries.iibot-hermes.allow_gateway_injection` 是**一级 entry 键**（不在 settings 下），旧位置
+`plugins.entries.inbox-wake.allow_gateway_injection` 只在启动时告警。
+
+### inbox（写在 `plugins.entries.iibot-hermes.settings.inbox.*`）
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -120,16 +133,25 @@ start_failed, stopped, rest}`。
 `summaryMaxTotalChars=1200`、`wakeContentMaxChars=4000`、`wakeContentTotalChars=12000`。
 
 
-### persona-mode
+### persona（`plugins.entries.iibot-hermes.settings.persona.*`）
 
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `enabled` | bool | `true` | |
+| `enabled` | bool | `false` | 0.x 的 persona-mode 默认 `true`；Alpha20261106 按 D-009 默认 `false`。打开才注册 `pre_llm_call` + `pre_tool_call` |
 | `personaFile` | str | `PERSONA.md` | 相对 session cwd；绝对路径优先 |
 | `maxChars` | int | `4000` | 正文截断上限 |
 | `outboundGuard` | bool | `true` | 缺文件时拦截外发工具 |
 | `outboundTools` | list | `["qq_conversation_send", "conversation_send"]` | 按**后缀**匹配 |
 | `denyTools` | list | `[]` | 可选的工具收窄（等价 DSH 的 Minimal 组） |
+
+### prompt（`plugins.entries.iibot-hermes.settings.prompt.*`）
+
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 0.x 的 minimal-system 默认 `true`；Alpha20261106 默认 `false`（宿主 `agent.system_prompt_override` 优先）。为真才注册 `llm_request` 中间件 |
+| `systemPrompt` | str | `You are a helpful software engineer assistant.` | 整段替换 system prompt 的回落值 |
+| `systemPromptFile` | str | `""` | 非空且可读时优先于 `systemPrompt`；留空 = `$HERMES_HOME/SYSTEM.md`，按 mtime 热更新 |
+| `logRewrite` | bool | `false` | 记录每次替换的形状/字数（不含内容与凭据） |
 
 ## 3a. 事件与注入形态
 

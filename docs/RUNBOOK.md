@@ -1,6 +1,11 @@
 # RUNBOOK：部署 / 启动 / 停止 / 排障
 
-面向"把 inbox-wake + persona-mode 装到另一台机器（含远程服务器）"的操作手册。
+面向"把 iibot-hermes（Alpha20261106 三合一：唤醒 + prompt + persona）装到另一台机器（含远程服务器）"的操作手册。
+
+> Alpha20261106 起插件只有一个：`plugins/iibot-hermes`，设置是
+> `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在
+> `plugins.entries.iibot-hermes.allow_gateway_injection`。文中出现的旧 id / 旧路径是 0.x 的写法，
+> 装了 Alpha20261106 就用新路径（映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目）。
 **先读这三条事实，否则一定会踩坑：**
 
 1. 插件的 hooks、4 个 `inbox_adapter_*` 工具、`/inbox` 命令**都运行在 gateway 进程里**
@@ -55,11 +60,13 @@ hermes gateway stop && hermes gateway run                 # 见 §3 的停止注
 
 ```bash
 H="$HOME/.hermes"
-cp -r plugins/inbox-wake plugins/persona-mode "$H/plugins/"
-hermes plugins enable inbox-wake persona-mode
+# 先删 0.x 的三个目录：留着会同进程双重注册
+rm -rf "$H/plugins/inbox-wake" "$H/plugins/minimal-system" "$H/plugins/persona-mode"
+cp -r plugins/iibot-hermes "$H/plugins/"
+hermes plugins enable iibot-hermes
 
-# —— inbox-wake 设置（键名驼峰，值与 config.yaml 一致）——
-S=plugins.entries.inbox-wake.settings
+# —— inbox 设置（键名驼峰，值与 config.yaml 一致）——
+S=plugins.entries.iibot-hermes.settings.inbox
 hermes config set $S.enabled true
 hermes config set $S.apiUrl http://127.0.0.1:18765
 hermes config set $S.inboxId main
@@ -69,7 +76,7 @@ hermes config set $S.wakeProfile generic            # generic | iibot（iibot �
 hermes config set $S.autoBind true                  # 会话首轮自动绑定
 hermes config set $S.pollSeconds 30                 # 后端不发心跳时的对账兜底；0=关
 hermes config set $S.sseReadTimeoutSeconds 120      # SSE 自己的读超时，别跟 requestTimeoutMs 混
-hermes config set plugins.entries.inbox-wake.allow_gateway_injection true   # 注入开关，默认 false
+hermes config set plugins.entries.iibot-hermes.allow_gateway_injection true   # 一级 entry 键，默认 false
 chmod 600 "$H/config.yaml"
 ```
 
@@ -127,7 +134,7 @@ hermes gateway ensure --timeout 90                   # 幂等：已 ready 立刻
 
 ### 2.3 挂载到会话
 
-- 推荐：`autoBind: true` → 会话**第一轮**自动绑定（日志：`inbox-wake: autoBind 已绑定会话 <key>`）
+- 推荐：`autoBind: true` → 会话**第一轮**自动绑定（日志：`inbox-wake: autoBind 已绑定会话 <key>`（子模块日志前缀保留））
 - 手动：会话内 `/inbox bind <inboxId>` 或工具 `inbox_adapter_bind`
 - 程序 MCP（claim/complete 需要）：`hermes config set mcp_servers.inbox.url http://127.0.0.1:18766/mcp` +
   `hermes config set mcp_servers.inbox.headers.Authorization "Bearer <program token>"`（用 `hermes mcp test inbox` 验证应见 12 个工具）
@@ -139,7 +146,7 @@ hermes gateway ensure --timeout 90                   # 幂等：已 ready 立刻
 | 档 | 目的 | 命令 | 是否要重启 gateway |
 |---|---|---|---|
 | 1 | 只取消某个会话的唤醒 | `/inbox unbind`（或 `inbox_adapter_unbind`） | 否 |
-| 2 | 停用插件（保留安装与设置） | `hermes plugins disable inbox-wake` | 是 |
+| 2 | 停用插件（保留安装与设置） | `hermes plugins disable iibot-hermes` | 是 |
 | 3 | 停 gateway（进程级全停） | `timeout 120 hermes gateway stop` | — |
 | 4 | 停后端 | `kill "$(cat run/inbox.pid)"` 或 `./kit.sh down` | 否 |
 
@@ -161,8 +168,8 @@ nohup hermes gateway run >> ~/.hermes/logs/gateway.log 2>&1 &
 
 ## 4. 升级 / 回滚
 
-三个插件（`persona-mode` / `inbox-wake` / `minimal-system`）都是纯 Python，
-升级 = 换目录 + 让进程重新 `register(ctx)`，不涉及数据迁移。
+`plugins/iibot-hermes`（Alpha20261106 三合一）是纯 Python，升级 = 换目录 + 让进程重新 `register(ctx)`，
+不涉及数据迁移。**替换前必须删掉 0.x 的三个旧目录**，否则同进程里新旧插件各注册一遍
 
 ### 4.1 一条命令（本地或远端 checkout）
 
@@ -174,20 +181,22 @@ git pull                       # 或 git checkout <tag/commit>
 ./scripts/sync-plugins.sh --restart   # 复制后停+起 gateway（远端常用）
 ```
 
-脚本只动 `$HERMES_HOME/plugins/<id>`，不碰 settings、`plugin-data`、token。
-`--only inbox-wake` 可只同步一个，`--target /home/ops/.hermes` 可指定别人的 HOME。
+脚本只动 `$HERMES_HOME/plugins/<id>`，不碰 settings、`plugin-data`、token；它会先删
+`{inbox-wake,minimal-system,persona-mode}` 再复制 `iibot-hermes`。
+`--only iibot-hermes` 可只同步这一个，`--target /home/ops/.hermes` 可指定别人的 HOME。
 
 ### 4.2 从开发机推到远端（远端不 checkout 时）
 
 ```bash
 rsync -a --delete \
   --exclude __pycache__ \
-  plugins/persona-mode plugins/inbox-wake plugins/minimal-system \
+  plugins/iibot-hermes \
   ops@host:.hermes/plugins/
-ssh ops@host 'hermes plugins doctor inbox-wake'
+ssh ops@host 'rm -rf ~/.hermes/plugins/{inbox-wake,minimal-system,persona-mode}'   # 旧目录必须删
+ssh ops@host 'hermes plugins doctor iibot-hermes'
 ```
 
-体积很小（每个插件 20–160 KB），不需要打 tar。
+体积很小（20–200 KB），不需要打 tar。
 
 ### 4.3 升级后必须做的一步
 
@@ -197,9 +206,9 @@ ssh ops@host 'hermes plugins doctor inbox-wake'
   `hermes plugins enable <id>` 也能让 gateway 跑 `reload-plugins` 重挂 hook，
   但 `tools` 与 `system_prompt_section` 按 prompt-cache 不变量延后到下一个 session。
 - 一次性会话：下次启动自然加载。
-- 新增插件（例如第一次装 `minimal-system`）：先确认 `~/.hermes/config.yaml` 的
+- 新增/升级插件（Alpha20261106 只有一个 `iibot-hermes`）：先确认 `~/.hermes/config.yaml` 的
   `plugins.enabled` 里有它，否则装进目录也不会加载。
-- `minimal-system.systemPromptFile` 的**内容**是热更新的（按 mtime 重读，无需重启）；
+- `settings.prompt.systemPromptFile` 的**内容**是热更新的（按 mtime 重读，无需重启；需 `prompt.enabled: true`）；
   **路径**（或 `systemPrompt`）改了要重启 gateway。默认路径是 `$HERMES_HOME/SYSTEM.md`，
   所以把 md 放那儿、什么都不配也能生效（文件不存在则回落 `systemPrompt`，不会报错）。
 
@@ -216,14 +225,15 @@ ssh ops@host 'hermes plugins doctor inbox-wake'
 ### 4.5 回滚
 
 ```bash
-hermes plugins disable inbox-wake          # 或三个都 disable
+hermes plugins disable iibot-hermes
 git checkout <上一个 commit>
 ./scripts/sync-plugins.sh --restart
-hermes plugins enable inbox-wake persona-mode minimal-system
+hermes plugins enable iibot-hermes
 ```
 
-状态备份：`~/.hermes/plugin-data/agent-plugin-inbox-wake-*/state.json`（0600，含 bindings / ops 事件流）。
-旧目录不会被脚本保留，需要留档就先 `cp -a ~/.hermes/plugins/inbox-wake /tmp/inbox-wake.<rev>`。
+状态备份：`~/.hermes/plugin-data/agent-plugin-iibot-hermes-*/state.json`（0600，含 bindings / ops 事件流）。
+0.x 的状态在 `~/.hermes/plugin-data/{inbox-wake,persona-mode}/`，**不会**自动迁移（绑定表可重建）。
+旧目录不会被脚本保留，需要留档就先 `cp -a ~/.hermes/plugins/iibot-hermes /tmp/iibot-hermes.<rev>`。
 
 ---
 
@@ -232,11 +242,11 @@ hermes plugins enable inbox-wake persona-mode minimal-system
 | # | 检查 | 命令 | 期望 |
 |---|---|---|---|
 | 1 | 静态 | `python3 -m compileall -q plugins` | 无输出 |
-| 2 | 单测 | `python3 -m unittest discover -s tests` | `Ran N tests OK`（当前 152） |
-| 3 | manifest | `hermes plugins validate plugins/inbox-wake --json` | `"ok": true` |
-| 4 | 注册 | `hermes plugins doctor inbox-wake` | `4 tool(s), 7 hook(s)` |
-| 5 | 加载 | `grep -a "inbox-wake: loaded" ~/.hermes/logs/agent.log \| tail -1` | 含 api / inbox / mode / profile |
-| 6 | 设置 | `hermes config get plugins.entries.inbox-wake.settings` | 六项关键值正确 |
+| 2 | 单测 | `python3 -m unittest discover -s tests` | `Ran N tests OK`（当前 231） |
+| 3 | manifest | `hermes plugins validate plugins/iibot-hermes --json` | `"ok": true` |
+| 4 | 注册 | `hermes plugins doctor iibot-hermes` | `4 tool(s), 7 hook(s)`（prompt/persona 关时只注册 wake 面；persona 打开后 9）。`WARN: pre_tool_call` 是预期 |
+| 5 | 加载 | `grep -a "iibot-hermes: effective settings" ~/.hermes/logs/agent.log \| tail -1` | 含 apiUrl / inboxId / wakeMode / pushMode / prompt.enabled / persona.enabled |
+| 6 | 设置 | `hermes config get plugins.entries.iibot-hermes.settings` | inbox/prompt/persona 三段关键值正确 |
 | 7 | token | `stat -c '%a %s' <token file>` | `600`，非空 |
 | 8 | 后端 | `curl -s <api>/healthz` + `/v1/inboxes/<id>/status` | 200 / `revision` 有值 |
 | 9 | MCP | `hermes mcp test inbox` | `Tools discovered: 12` |
@@ -262,8 +272,9 @@ hermes plugins enable inbox-wake persona-mode minimal-system
 
 | 症状 | 先看 | 处理 |
 |---|---|---|
-| `/inbox` 报 Unknown command / 无输出 | `grep -a "inbox-wake: loaded" ~/.hermes/logs/agent.log` | 插件没加载：`hermes plugins enable` + 重启 gateway |
-| `绑定失败：TOKEN_MISSING 未配置 adapter token 引用` | `hermes config get plugins.entries.inbox-wake.settings` | 多为**旧 gateway 进程配置陈旧**：重启 gateway |
+| `/inbox` 报 Unknown command / 无输出 | `grep -a "inbox-wake: loaded" ~/.hermes/logs/agent.log` | 插件没加载：`hermes plugins enable iibot-hermes` + 重启 gateway |
+| 同一条 push 被注入两次 | `ls ~/.hermes/plugins` | 旧目录 `{inbox-wake,minimal-system,persona-mode}` 没删，新旧插件双重注册 → `rm -rf` 后重启 gateway |
+| `绑定失败：TOKEN_MISSING 未配置 adapter token 引用` | `hermes config get plugins.entries.iibot-hermes.settings.inbox` | 多为**旧 gateway 进程配置陈旧**：重启 gateway |
 | `TOKEN_FILE_PERMISSIONS` | `stat -c %a <file>` | `chmod 600` |
 | `TOKEN_UNREADABLE` | 文件是否存在、当前用户可读 | 修路径/权限 |
 | `sse: retrying`，ops 里 `detail: heartbeat timeout` 每 8–10s 一条 | 后端是否发 `: ping` | 后端加心跳；或 `pollSeconds=30~60` 兜底 + 调大 `sseReadTimeoutSeconds` |

@@ -1,5 +1,7 @@
 # DSH 原版对齐表
 
+> **Alpha20261106 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目。
+
 对照物：
 
 - 人设：`iiBotMosire-DSH/packages/dsh-persona-mode/`（`index.js`、`lib/persona.js`、`custom-persona.js`、`README.md`）
@@ -47,7 +49,7 @@
 |---|---|---|
 | `agent/status: idle` 主触发 + `turn/end` 次触发，合并为一次串行去抖决策 | 无 turn 状态事件：`pre_llm_call` 标 running、`post_llm_call`/`on_stream_end` 标 idle；running 期间唤醒进 `pendingWake`，本轮结束补投 | ⚠️ 近似 |
 | `agent.followup(message)` | `ctx.inject_message(text, session_key=…)`（`hermes_cli/plugins.py:588`；contract `hermes_cli/plugins_injection.py`） | 🔁 |
-| gateway 注入无需额外授权 | **必须** `plugins.entries.inbox-wake.allow_gateway_injection: true`，否则返回 `False` | ⚠️ 宿主策略，已文档化 |
+| gateway 注入无需额外授权 | **必须** `plugins.entries.iibot-hermes.allow_gateway_injection: true`，否则返回 `False` | ⚠️ 宿主策略，已文档化 |
 | 幂等键 `inbox:<id>:revision:<n>:session:<ref>` + `msg_inbox_<sha256[:24]>` 消息 id | 同 key 算法；`inject_message` 无幂等键 → 去重完全靠持久化水位 | ⚠️ 同 DSH 的处置（DSH 也是自己实现） |
 | 同一 revision 只唤醒一次 | `lastWokenRevision` 水位 + `pendingWake` | ✅ |
 | 先 `GET /status` 回源再决定（不信 SSE 缓存） | 同 | ✅ |

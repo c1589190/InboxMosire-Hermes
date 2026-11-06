@@ -26,7 +26,7 @@ cd InboxMosire-Hermes
 
 | 动作 | 命令 | 说明 |
 | --- | --- | --- |
-| 装插件 | `./scripts/install.sh plugins` | `hermes plugins install "<repo>#plugins/<id>" --enable`，或 `--local <path>` 从本地 checkout 复制 |
+| 装插件 | `./scripts/install.sh plugins` | **先删** `$HERMES_HOME/plugins/{inbox-wake,minimal-system,persona-mode}`，再 `hermes plugins install "<repo>#plugins/iibot-hermes" --enable`，或 `--local <path>` 从本地 checkout 复制 |
 | 写 token | `./scripts/install.sh token` | 交互式读入（不回显）；无终端时用 `INBOX_TOKEN=… ./scripts/install.sh token`；写 `$HERMES_HOME/inbox-mosire/api-token`（0600，目录 0700） |
 | 写设置 | `./scripts/install.sh settings` | 全部走 `hermes config set --force`，不手改 YAML |
 | 体检 | `./scripts/install.sh check` | `plugins list` + `plugins doctor --ci` + `healthz` |
@@ -38,9 +38,14 @@ cd InboxMosire-Hermes
 所以别写时间戳之类每轮都会变的东西（每轮字节必须一致，否则前缀缓存失效）。
 
 环境变量覆盖：`INBOX_API_URL`（默认 `http://127.0.0.1:18765`）、`INBOX_ID`（`main`）、
-`WAKE_MODE`（`claim`）、`WAKE_PROFILE`（`generic`）、`PERSONA_FILE`、`SYSTEM_PROMPT_FILE`（写入
-`minimal-system.systemPromptFile`，不写则读 `$HERMES_HOME/SYSTEM.md`、再不行用一句常量）、
-`TOKEN_PATH`、`HERMES_BIN`。
+`WAKE_MODE`（`claim`）、`WAKE_PROFILE`（`generic`）、`PROMPT_ENABLED`（`0`）、`SYSTEM_PROMPT_FILE`
+（写入 `plugins.entries.iibot-hermes.settings.prompt.systemPromptFile`，不写则读 `$HERMES_HOME/SYSTEM.md`、
+再不行用一句常量）、`PERSONA_ENABLED`（`0`）、`PERSONA_FILE`、`TOKEN_PATH`、`HERMES_BIN`。
+
+Alpha20261106 起 `prompt.enabled` / `persona.enabled` **默认都是 false**：装完不会接管 system prompt、
+也不会注入人设（D-009）。要回到 0.x 的行为，显式 `PROMPT_ENABLED=1 ./scripts/install.sh settings`（或手写
+`hermes config set --force plugins.entries.iibot-hermes.settings.prompt.enabled true`）。**不要**同时打开
+`prompt.enabled` 与宿主 `agent.system_prompt_override`，两处会互相覆盖。
 
 ## 2. 脚本写进 config.yaml 的东西
 
@@ -48,35 +53,45 @@ cd InboxMosire-Hermes
 agent:
   system_prompt_override: "You are a helpful software engineer assistant."  # 需宿主补丁，见 docs/HOST-PATCH.md
 plugins:
-  enabled: [persona-mode, inbox-wake, minimal-system]  # 插件默认不加载，必须点名；persona-mode 依赖 minimal-system
+  enabled: [iibot-hermes]                     # 插件默认不加载，必须点名
   entries:
-    minimal-system:                           # 必需同伴：把整段 system prompt 换成一句（或一个 md 文件）
+    iibot-hermes:
+      allow_gateway_injection: true           # 一级键（不在 settings 下）；不写 true，inject_message 一律返回 False
       settings:
-        enabled: true
-        systemPromptFile: ""                    # 留空 = $HERMES_HOME/SYSTEM.md；要放别处写绝对路径
-                                                # 文件可读时整段替换，优先级高于 systemPrompt
-        systemPrompt: "You are a helpful software engineer assistant."  # 回落值；YAML 块标量（|）可写多行
-    persona-mode:
-      settings:
-        enabled: true
-        personaFile: /abs/path/to/PERSONA.md  # 不写则读会话工作目录下的 PERSONA.md
-    inbox-wake:
-      allow_gateway_injection: true           # 不写 true，inject_message 一律返回 False
-      settings:
-        enabled: true
-        apiUrl: http://127.0.0.1:18765
-        inboxId: main
-        adapterTokenFile: file:/home/<you>/.hermes/inbox-mosire/api-token
-        wakeMode: claim
-        wakeProfile: generic
+        inbox:                                # 唤醒面（旧 inbox-wake.settings 的全部键都在这里）
+          enabled: true
+          apiUrl: http://127.0.0.1:18765
+          inboxId: main
+          adapterTokenFile: file:/home/<you>/.hermes/inbox-mosire/api-token
+          wakeMode: claim
+          wakeProfile: generic
+          pushMode: auto
+          pushGraceMs: 2000
+          firstRunGuide: true
+        prompt:                               # 默认关：system prompt 交给宿主的 agent.system_prompt_override
+          enabled: false
+          systemPromptFile: ""                # 留空 = $HERMES_HOME/SYSTEM.md；要放别处写绝对路径
+                                              # 文件可读时整段替换，优先级高于 systemPrompt
+          systemPrompt: "You are a helpful software engineer assistant."  # 回落值；YAML 块标量（|）可写多行
+        persona:                              # 默认关（D-009）：人设改由首条 inbox 引导读 AGENTS.md
+          enabled: false
+          personaFile: /abs/path/to/PERSONA.md  # 不写则读会话工作目录下的 PERSONA.md
 ```
 
 要点：
 
-- `allow_gateway_injection` 在 **entry 层**（和 `settings` 同级），不在 `settings` 下。
-- 设置键都读 `plugins.entries.<id>.settings.<key>`；camelCase 合法。
+- `allow_gateway_injection` 在 **entry 层**（和 `settings` 同级），不在 `settings` 下。Alpha20261106 起宿主只读
+  `plugins.entries.iibot-hermes.allow_gateway_injection`；旧位置 `plugins.entries.inbox-wake.allow_gateway_injection`
+  只在启动时告警（`scripts/upgrade.sh` 会自动搬）。
+- 设置键都读 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.<key>`；camelCase 合法。
+- **整段回落**：`settings.inbox` 缺失 → 读 `plugins.entries.inbox-wake.settings`；`settings.prompt` 缺失 →
+  读 `plugins.entries.minimal-system.settings`；`settings.persona` 缺失 → 读 `plugins.entries.persona-mode.settings`。
+  回落只读、会打 WARNING，新段存在后旧段失效（可删）。
 - `channels` 是**列表**，`hermes config set` 只写标量 → 需要自定义时手改 YAML（默认空 = 订阅全部通道）。
 - 插件只在 **gateway 启动时**发现一次 → 改完设置必须重启 gateway。
+- **旧目录必须删**：`$HERMES_HOME/plugins/{inbox-wake,minimal-system,persona-mode}` 留着会与新插件在同一进程里
+  各注册一遍（4 个工具、`/inbox`、hook 全重、`inbox.push` 投递两次）。`install.sh` / `upgrade.sh` /
+  `sync-plugins.sh` 都会先删（upgrade/sync 先备份到 `plugins/.backups/<id>-<时间戳>`）。
 - 项目内的 `./.hermes/plugins/` **不会**被加载，只能装到 `$HERMES_HOME/plugins/`。
 
 ## 3. 业务工具（InboxMosire MCP）
@@ -94,7 +109,8 @@ hermes mcp test inbox-mosire
 - Hermes 的 config **没有** `${ENV}` 展开，落到 `config.yaml` 里的 header 是明文 →
   `chmod 600 ~/.hermes/config.yaml`，且永远不要提交。
 - 工具名会带上服务器前缀，如 `mcp__inbox-mosire__inbox_list`；
-  `persona-mode` 的外发门禁按**后缀**匹配，所以 `mcp__…__qq_conversation_send` 同样会被拦。
+  `settings.persona.outboundTools` / `denyTools` 的外发门禁按**后缀**匹配，所以
+  `mcp__…__qq_conversation_send` 同样会被拦（需先 `persona.enabled: true`）。
 - `wakeMode: claim` 需要 `inbox_list` + `inbox_claim` 两个工具在线；
   `inbox_adapter_status` 的 `health.programMcp` 会报 `ready` / `partial` / `missing`。
 - 协调/开发工作区**不要**挂 iibot 的 `qq_*` Bot 业务 MCP（工作区红线 7）。
@@ -103,9 +119,11 @@ hermes mcp test inbox-mosire
 
 ```bash
 hermes plugins list --user --plain
-hermes plugins doctor persona-mode --ci
-hermes plugins doctor inbox-wake --ci
-hermes plugins validate plugins/inbox-wake --json    # catalog 同款检查（可选）
+hermes plugins doctor iibot-hermes --ci              # 聚合插件：4 tool(s) + 7 hook(s)（prompt/persona 关时只注册 wake 面；persona 打开后 9）
+# `WARN: manifest declares hook 'pre_tool_call' but registration did not add it` 是
+# persona.enabled=false 的预期结果：manifest 取并集声明，运行时按开关注册。
+hermes plugins validate plugins/iibot-hermes --json  # catalog 同款检查（可选）
+grep -a "iibot-hermes: effective settings" ~/.hermes/logs/agent.log | tail -1   # 生效值（不含 token）
 ```
 
 `doctor` 用临时 `HERMES_HOME` 真实跑一遍 `register(ctx)` 并核对 registry 漂移，
@@ -127,7 +145,7 @@ curl -sS -X POST http://127.0.0.1:18765/v1/inboxes/main/items \
 #    /inbox log 里应出现 binding.bind / sse.event / wake.ok
 ```
 
-人设侧冒烟：
+人设侧冒烟（先 `hermes config set --force plugins.entries.iibot-hermes.settings.persona.enabled true`）：
 
 ```bash
 # 新开 session 后，历史里应只有一条带同一 persona-hash 的注入
@@ -140,11 +158,12 @@ grep -c 'persona-hash' <session 转写>
 ```bash
 git pull
 ./scripts/sync-plugins.sh --dry-run   # 已装版本 → 源版本，以及哪些文件会变
-./scripts/sync-plugins.sh --restart   # 整目录替换 + 清 __pycache__ + 重启 gateway
-hermes plugins doctor persona-mode inbox-wake minimal-system
+./scripts/sync-plugins.sh --restart   # 先删三个 0.x 目录，再整目录替换 iibot-hermes + 清 __pycache__ + 重启 gateway
+hermes plugins doctor iibot-hermes
 ```
 
-远端不 checkout 时用 `rsync -a --delete --exclude __pycache__ plugins/{persona-mode,inbox-wake,minimal-system} ops@host:.hermes/plugins/`。
+远端不 checkout 时用 `rsync -a --delete --exclude __pycache__ plugins/iibot-hermes ops@host:.hermes/plugins/`，
+**并** `ssh ops@host 'rm -rf ~/.hermes/plugins/{inbox-wake,minimal-system,persona-mode}'`。
 细节与回滚见 `docs/RUNBOOK.md` §4。
 
 ## 6. kit：一个目录 + 一句话自动挂载
@@ -216,15 +235,43 @@ settings 里的 `inboxId` / `adapterTokenFile` 自动绑定（失败只写一条
 ## 7. 卸载
 
 ```bash
-hermes plugins disable inbox-wake
-hermes plugins disable persona-mode
-hermes plugins remove inbox-wake
-hermes plugins remove persona-mode
-# plugin-data（绑定表 + ops 日志）保留在 $HERMES_HOME/plugin-data/{persona-mode,inbox-wake}/
+hermes plugins disable iibot-hermes
+hermes plugins remove iibot-hermes
+# plugin-data（绑定表 + ops 日志）保留在 $HERMES_HOME/plugin-data/agent-plugin-iibot-hermes-*/
+# 0.x 的旧数据在 plugin-data/{persona-mode,inbox-wake}/，需要留档就先 cp -a 出来
 rm -rf ~/.hermes/inbox-mosire/api-token        # 不再需要 adapter 时
 ```
 
-卸载后记得从 `plugins.enabled` 里去掉两个 id，并重启 gateway。
+卸载后记得从 `plugins.enabled` 里去掉 `iibot-hermes`，并重启 gateway。
+
+## 从 0.x 迁移到 Alpha20261106（三合一）
+
+Alpha20261106 把 `inbox-wake` / `minimal-system` / `persona-mode` 合成一个 `iibot-hermes`。升级只需：
+
+```bash
+./scripts/upgrade.sh --dry-run   # 看会删哪些目录、换哪些文件
+./scripts/upgrade.sh             # 删三个旧目录（先备份）+ 装 iibot-hermes + 补配置键 + 重启 gateway
+```
+
+设置**不必手工搬**：新段 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}` 缺失时，插件会
+只读回落旧命名空间（`inbox-wake` / `minimal-system` / `persona-mode` 的 `settings`），每次回落打一条 WARNING。
+确认值正确后再显式写到新段并删除旧段（例：
+
+```bash
+hermes config set --force plugins.entries.iibot-hermes.settings.inbox.apiUrl http://127.0.0.1:18765
+hermes config set --force plugins.entries.iibot-hermes.allow_gateway_injection true
+```
+
+）。两个开关在 Alpha20261106 **默认关**，要恢复 0.x 行为需显式打开：
+
+```bash
+hermes config set --force plugins.entries.iibot-hermes.settings.prompt.enabled true    # 与 agent.system_prompt_override 二选一
+hermes config set --force plugins.entries.iibot-hermes.settings.persona.enabled true   # D-009 之后默认不注入人设
+```
+
+⚠️ **旧目录必须删**：`$HERMES_HOME/plugins/{inbox-wake,minimal-system,persona-mode}` 与新插件同时被加载时，
+4 个工具、`/inbox`、hook 会各注册一遍，`inbox.push` 会被投递两次。`install.sh` / `upgrade.sh` /
+`sync-plugins.sh` 都会先删；手工升级的话自己 `rm -rf` 那三个目录后重启 gateway。
 
 ## 升级到新版本（一键）
 
@@ -233,11 +280,11 @@ rm -rf ~/.hermes/inbox-mosire/api-token        # 不再需要 adapter 时
 **A. 宿主原生（只对 provenance 有效的插件）**
 
 ```bash
-hermes plugins update inbox-wake          # 单插件
+hermes plugins update iibot-hermes        # 单插件
 hermes plugins update --yes               # 全部已装插件
 ```
 
-只有当插件是 `hermes plugins install <repo>#plugins/inbox-wake --ref <tag>` 装进来的、宿主有 provenance 记录时才可用；早期用 `cp -a` / `sync-plugins.sh` 复制进去的会报找不到来源。
+只有当插件是 `hermes plugins install <repo>#plugins/iibot-hermes --ref <tag>` 装进来的、宿主有 provenance 记录时才可用；早期用 `cp -a` / `sync-plugins.sh` 复制进去的会报找不到来源。
 
 **B. 仓内脚本（对复制安装同样有效，推荐）**
 
@@ -251,11 +298,18 @@ hermes plugins update --yes               # 全部已装插件
 ./scripts/upgrade.sh --rollback           # 回到最近一次备份并重启
 ```
 
-它做的事：按 ref 从 git 取干净副本（`git archive`，不经过工作区）→ 备份到 `$HERMES_HOME/plugins/.backups/<id>-<时间戳>` → 整目录替换并清 `__pycache__` → `python3 -m compileall` 语法自检（失败就提示回滚）→ 缺则补 `pushMode/pushGraceMs/firstRunGuide` 三个配置键 → `hermes gateway stop && sleep 2 && hermes gateway start` → 打印版本、备份目录与核对提示。
+它做的事：**先删** `$HERMES_HOME/plugins/{inbox-wake,minimal-system,persona-mode}`（先备份到
+`$HERMES_HOME/plugins/.backups/<id>-<时间戳>`）→ 按 ref 从 git 取干净副本（`git archive`，不经过工作区）
+→ 备份并整目录替换 `iibot-hermes`、清 `__pycache__` → `python3 -m compileall` 语法自检（失败就提示回滚）
+→ 缺则补 `settings.inbox.{pushMode,pushGraceMs,firstRunGuide}`，并把旧的
+`plugins.entries.inbox-wake.allow_gateway_injection` 搬到 `plugins.entries.iibot-hermes.allow_gateway_injection`
+→ `hermes gateway stop && sleep 2 && hermes gateway start` → 打印版本、备份目录与核对提示。
 
 不碰 `config.yaml` 里已有的值、不碰 plugin-data、不碰 token。
 
-升级后核对日志：应看到 `push.ok` / `push.ack` / `guide.sent`，**不应**再看到 `wake.ok`（那是 changed 路径；只有 `pushMode: off` 时才该出现）。
+升级后核对日志：应看到 `iibot-hermes: effective settings …` 一行，以及 `push.ok` / `push.ack` /
+`guide.sent`，**不应**再看到 `wake.ok`（那是 changed 路径；只有 `pushMode: off` 时才该出现），
+也不应出现重复注册（工具重名 / hook 双份）的告警。
 
 ## 推送模式（0.3.0 起）
 
@@ -264,12 +318,13 @@ hermes plugins update --yes               # 全部已装插件
 ```yaml
 plugins:
   entries:
-    inbox-wake:
+    iibot-hermes:
       settings:
-        pushMode: on          # auto（默认）| on | off
-        pushGraceMs: 2000     # changed 让位给 push 的宽限
-        firstRunGuide: true   # 首条注入先说明 AGENTS.md / PERSONA.md
-        firstRunGuideText: "" # 留空用内置文案
+        inbox:
+          pushMode: on          # auto（默认）| on | off
+          pushGraceMs: 2000     # changed 让位给 push 的宽限
+          firstRunGuide: true   # 首条注入先说明 AGENTS.md / PERSONA.md
+          firstRunGuideText: "" # 留空用内置文案
 ```
 
 - `auto`：第一次收到合法 push 后自动转 push 优先（老服务端不受影响）。

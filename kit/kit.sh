@@ -26,7 +26,8 @@ WAKE_MODE="${WAKE_MODE:-claim}"
 WAKE_PROFILE="${WAKE_PROFILE:-generic}"
 CHANNELS="${CHANNELS:-}"
 RESTART_GATEWAY="${RESTART_GATEWAY:-auto}"
-PLUGIN=inbox-wake
+PLUGIN=iibot-hermes
+INBOX_SETTINGS="plugins.entries.$PLUGIN.settings.inbox"
 
 # shellcheck disable=SC1091
 [ -f "$KIT_DIR/kit.env" ] && . "$KIT_DIR/kit.env"
@@ -149,14 +150,15 @@ cmd_up() {
 
   say "④ 插件设置"
   local token_ref="file:$WAKE_TOKEN_FILE"
-  hermes config set "plugins.entries.$PLUGIN.settings.enabled" true >/dev/null
-  hermes config set "plugins.entries.$PLUGIN.settings.apiUrl" "$INBOX_API" >/dev/null
-  hermes config set "plugins.entries.$PLUGIN.settings.inboxId" "$INBOX_ID" >/dev/null
-  hermes config set "plugins.entries.$PLUGIN.settings.adapterTokenFile" "$token_ref" >/dev/null
-  hermes config set "plugins.entries.$PLUGIN.settings.wakeMode" "$WAKE_MODE" >/dev/null
-  hermes config set "plugins.entries.$PLUGIN.settings.wakeProfile" "$WAKE_PROFILE" >/dev/null
-  hermes config set "plugins.entries.$PLUGIN.settings.autoBind" "$([ "$AUTO_BIND" = "1" ] && echo true || echo false)" >/dev/null
-  [ -n "$CHANNELS" ] && hermes config set "plugins.entries.$PLUGIN.settings.channels" "[$CHANNELS]" >/dev/null
+  hermes config set "$INBOX_SETTINGS.enabled" true >/dev/null
+  hermes config set "$INBOX_SETTINGS.apiUrl" "$INBOX_API" >/dev/null
+  hermes config set "$INBOX_SETTINGS.inboxId" "$INBOX_ID" >/dev/null
+  hermes config set "$INBOX_SETTINGS.adapterTokenFile" "$token_ref" >/dev/null
+  hermes config set "$INBOX_SETTINGS.wakeMode" "$WAKE_MODE" >/dev/null
+  hermes config set "$INBOX_SETTINGS.wakeProfile" "$WAKE_PROFILE" >/dev/null
+  hermes config set "$INBOX_SETTINGS.autoBind" "$([ "$AUTO_BIND" = "1" ] && echo true || echo false)" >/dev/null
+  [ -n "$CHANNELS" ] && hermes config set "$INBOX_SETTINGS.channels" "[$CHANNELS]" >/dev/null
+  # 一级 entry 键（不在 settings 里）；旧位置 plugins.entries.inbox-wake.allow_gateway_injection 已失效
   hermes config set "plugins.entries.$PLUGIN.allow_gateway_injection" true >/dev/null
   ok "apiUrl=$INBOX_API inbox=$INBOX_ID autoBind=$AUTO_BIND token=$token_ref"
 
@@ -226,8 +228,8 @@ cmd_status() {
   done
   say "Hermes"
   hermes gateway status 2>/dev/null | head -1 | sed 's/^/  /'
-  hermes plugins list --plain 2>/dev/null | grep -E "$PLUGIN|persona-mode" | sed 's/^/  /' || true
-  hermes config get "plugins.entries.$PLUGIN.settings" 2>/dev/null | sed 's/^/  /' || true
+  hermes plugins list --plain 2>/dev/null | grep -E "$PLUGIN" | sed 's/^/  /' || true
+  hermes config get "$INBOX_SETTINGS" 2>/dev/null | sed 's/^/  /' || true
   say "MCP"
   hermes config get mcp_servers 2>/dev/null | grep -E "^[a-zA-Z0-9_-]+:" | sed 's/^/  /' || say "  （无）"
 }

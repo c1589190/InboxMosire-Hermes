@@ -1,5 +1,5 @@
 name: iibot-hermes
-version: "1.0.0"
+version: "Alpha20261106"
 description: "iiBot 在 Hermes 上的唯一插件：InboxMosire 唤醒适配器（SSE 游标 + 绑定会话唤醒、有界不可信摘要、占用租约、inbox.push 正文逐字注入并立即 ack、首条工作区引导、4 个 inbox_adapter_* 工具 + /inbox 命令）+ 极简 system prompt（一句常量或操作者 md 文件，走公开 llm_request 中间件，默认关闭——宿主 agent.system_prompt_override 优先）+ 人设契约注入（角色行 + PERSONA.md 合成一条 pre_llm_call 注入、hash 去重、压缩后重锚、缺文件封禁外发；默认关闭，D-009）。业务 inbox 工具（list/claim/push/complete/rest）仍留在 InboxMosire MCP 服务器。1.0.0 由 inbox-wake 0.3.1 + minimal-system 0.2.1 + persona-mode 0.2.0 合并；旧插件目录必须删除，否则同进程双重注册。"
 author: "c1589190"
 manifest_version: 2

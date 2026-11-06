@@ -24,7 +24,7 @@ HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
 PLUGIN_IDS=(iibot-hermes)
 # 1.0.0 合并前的目录：替换前必须删除，否则同进程里新旧插件会把工具/hook/命令各注册一遍。
 LEGACY_PLUGIN_IDS=(inbox-wake minimal-system persona-mode)
-DEFAULT_REF="${DEFAULT_REF:-v1.0.0}"
+DEFAULT_REF="${DEFAULT_REF:-Alpha20261106}"
 
 REF="$DEFAULT_REF"
 DRY_RUN=0

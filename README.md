@@ -61,9 +61,7 @@ cp kit.env.example kit.env        # 改 jar 路径 / 数据目录 / 端口
 
 | 组件 | 作用 | 依赖宿主面 |
 |---|---|---|
-| `plugins/persona-mode` | **角色扮演模式**：两句角色行 + `PERSONA.md` 正文合成一条 user 注入、按 hash 去重、压缩后重锚、缺文件时封禁外发 | `pre_llm_call` / `post_compaction` / `pre_tool_call` |
-| `plugins/minimal-system` | persona-mode 的**必需同伴**：把出站请求的整段 system prompt 换成一句常量（默认 `You are a helpful software engineer assistant.`）或操作者自己的 md 文件（`systemPromptFile`，留空 = `$HERMES_HOME/SYSTEM.md`，改文件即时生效）。用 `requires_plugins` 声明依赖，缺了会告警 | `register_middleware("llm_request")`；宿主打过 `patches/0001-…` 时由 `agent.system_prompt_override` 直接生效，中间件自动变成 no-op |
-| `plugins/inbox-wake` | 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令 | `inject_message` / `register_tool` / `register_command` / `post_tool_call` / `pre_llm_call` |
+| `plugins/iibot-hermes` | **唯一插件**（Alpha20261106 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并）。三段能力：`lib/wake/` 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令；`lib/prompt/` 一句式 system prompt（`llm_request` 中间件，**默认关**，宿主 `agent.system_prompt_override` 优先）；`lib/persona/` 人设契约注入（`pre_llm_call` + `pre_tool_call` 守卫，**默认关**，D-009） | `inject_message` / `register_tool` / `register_command` / `register_middleware("llm_request")` / `pre_llm_call` / `pre_tool_call` / `post_llm_call` / `post_tool_call` / `on_session_*` |
 | `kit/` | 一键发行包：`kit.sh`（doctor/up/status/down/probe/token）+ `kit.env.example` + `引导.md` | 只用宿主 CLI 与 InboxMosire jar |
 
 ---
@@ -77,7 +75,7 @@ iiBot / 后端写入
 InboxMosire inboxd ──18765 API / 18766 MCP（可选）
       │  ① SSE `inbox.push`（服务端渲染好的整段正文）/ `inbox.changed`（只带计数，pollSeconds 兜底）
       ▼
-Hermes gateway（常驻；inbox-wake 的线程 + 7 个 hook + 4 个工具 + /inbox 都在这个进程里）
+Hermes gateway（常驻；iibot-hermes 的线程 + hook + 4 个工具 + /inbox 都在这个进程里）
       │  ② push：把 data.text **原样**注入（不加 header）→ 立即 POST …/deliveries/{id}/ack
       │     changed：注入 `[INBOX_HOST_EVENT] inbox=… revision=… available=…`
       ▼
@@ -134,9 +132,14 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 
 | 键 | 例子 | 说明 |
 |---|---|---|
-| `plugins.entries.inbox-wake.settings.apiUrl` | `http://127.0.0.1:18765` | InboxMosire API |
-| `plugins.entries.inbox-wake.settings.inboxId` | `main` | 订阅哪个通知板 |
-| `plugins.entries.inbox-wake.settings.adapterTokenFile` | `file:/path/to/api-token` | **0600 文件**，`inline:` 一律拒绝 |
+| `plugins.entries.iibot-hermes.settings.inbox.apiUrl` | `http://127.0.0.1:18765` | InboxMosire API |
+| `plugins.entries.iibot-hermes.settings.inbox.inboxId` | `main` | 订阅哪个通知板 |
+| `plugins.entries.iibot-hermes.settings.inbox.adapterTokenFile` | `file:/path/to/api-token` | **0600 文件**，`inline:` 一律拒绝 |
+
+设置分三段：`settings.inbox.*`（唤醒，键名同旧 `inbox-wake.settings.*`）、`settings.prompt.*`、
+`settings.persona.*`。整段缺失时会**只读回落**到旧命名空间（`plugins.entries.inbox-wake.settings` /
+`plugins.entries.minimal-system.settings` / `plugins.entries.persona-mode.settings`）并打一条 WARNING，
+迁移步骤见 `docs/INSTALL.md`。
 
 常改的几个：
 
@@ -154,7 +157,17 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 | `pushGraceMs` | `2000` | `auto` 模式下 `changed` 唤醒的宽限期（0..30000 ms）：push 若先到就把这次唤醒撤掉，避免同一批消息注入两次 |
 | `firstRunGuide` | `true` | 每个会话首次注入前先发一条极短说明，引导 Agent 自己去读工作区的 `AGENTS.md` / `PERSONA.md`（D-009：人设不再由宿主注入） |
 | `firstRunGuideText` | `""` | 覆盖上面那条说明的文案；空 = 用内置默认 |
-| `allow_gateway_injection`（`plugins.entries.inbox-wake.`） | — | 宿主侧授权，**必须显式 `true`** |
+| `allow_gateway_injection`（`plugins.entries.iibot-hermes.`，**一级 entry 键，不在 settings 里**） | — | 宿主侧授权，**必须显式 `true`**；旧位置 `plugins.entries.inbox-wake.allow_gateway_injection` 只在启动时告警，不再生效 |
+
+### prompt / persona（Alpha20261106 起默认关）
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `plugins.entries.iibot-hermes.settings.prompt.enabled` | `false` | 打开才注册 `llm_request` 中间件（整段替换 system prompt）。与宿主 `agent.system_prompt_override` **二选一** |
+| `…settings.prompt.systemPrompt` / `systemPromptFile` | 一句常量 / `""` | 文件优先于常量；留空 = `$HERMES_HOME/SYSTEM.md`，按 mtime 热更新 |
+| `plugins.entries.iibot-hermes.settings.persona.enabled` | `false` | 打开才注册 `pre_llm_call`（角色行 + `PERSONA.md` 契约，按 hash 去重、压缩后重锚）与 `pre_tool_call` 守卫（`denyTools` / 缺文件封禁外发）。D-009 之后人设改由首条 inbox 引导读 `AGENTS.md` / `PERSONA.md` |
+| `…settings.persona.personaFile` | `PERSONA.md` | 绝对路径，或相对调用会话的工作目录 |
+| `…settings.persona.maxChars` / `outboundGuard` / `outboundTools` / `denyTools` | `4000` / `true` / 两个发送工具 / `[]` | 与 persona-mode 0.2.0 同义 |
 
 另外 Hermes **没有** `register_mcp_server`，业务 MCP 只能写配置：
 `hermes config set mcp_servers.<name>.url/.transport/.headers.Authorization`。
@@ -203,11 +216,11 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 
 ```bash
 python3 -m compileall -q plugins
-python3 -m unittest discover -s tests        # 152 个用例
-hermes plugins validate plugins/inbox-wake --json
-hermes plugins doctor inbox-wake             # 4 tool(s), 7 hook(s)
-hermes plugins doctor persona-mode           # 0 tool(s), 2 hook(s)
-hermes plugins doctor minimal-system         # manifest/register 漂移（llm_request 中间件）
+python3 -m unittest discover -s tests        # 231 个用例
+hermes plugins validate plugins/iibot-hermes --json
+hermes plugins doctor iibot-hermes           # 4 tool(s), 7 hook(s)（prompt/persona 默认关；persona 打开后 9）
+# doctor 会 WARN "manifest declares hook 'pre_tool_call' but registration did not add it"：
+# 那是 persona.enabled=false 的预期结果（manifest 取并集声明，运行时按开关注册）。
 ./scripts/patch-hermes.sh check               # 宿主极简 system 补丁是否已打（见 docs/HOST-PATCH.md）
 ```
 

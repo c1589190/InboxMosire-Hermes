@@ -1,9 +1,9 @@
 # CHANGELOG
 
-## 1.0.0 (2026-11-07) —— 三合一：`plugins/iibot-hermes`
+## Alpha20261106 (2026-11-07) —— 三合一：`plugins/iibot-hermes`
 
 **合并了什么。** `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并为唯一插件
-`plugins/iibot-hermes`（`name: iibot-hermes`，`version: "1.0.0"`）。三个目录用 `git mv` 保留历史：
+`plugins/iibot-hermes`（`name: iibot-hermes`，`version: "Alpha20261106"`）。三个目录用 `git mv` 保留历史：
 
 | 旧位置 | 新位置 |
 |---|---|
@@ -32,7 +32,7 @@
 启动多一行 `iibot-hermes: effective settings apiUrl=… inboxId=… wakeMode=… pushMode=… firstRunGuide=…
 prompt.enabled=… persona.enabled=…`（不含 token）。
 
-**两个开关默认关。** `prompt.enabled` 与 `persona.enabled` 在 1.0.0 都是 **false**（0.x 默认 true）：
+**两个开关默认关。** `prompt.enabled` 与 `persona.enabled` 在 Alpha20261106 都是 **false**（0.x 默认 true）：
 
 - `prompt.enabled=false` → 不注册 `llm_request` 中间件，system prompt 交给宿主的
   `agent.system_prompt_override`（`patches/0001-host-system-prompt-override.patch`），两者二选一。

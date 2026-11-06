@@ -1,5 +1,7 @@
 # 宿主补丁：极简 system prompt（`agent.system_prompt_override`）
 
+> **Alpha20261106 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目。
+
 状态：**已应用到本机**（host `~/.hermes/hermes-agent`，commit `178997d9a9`，父 `0aab6dcf8b`）。
 补丁文件：`patches/0001-host-system-prompt-override.patch`；应用脚本：`scripts/patch-hermes.sh`。
 

@@ -1,5 +1,7 @@
 # 冷启动自举：Hermes 先起，agent 用人设把 iiBot 拉起来
 
+> **Alpha20261106 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 Alpha20261106 条目。
+
 状态：**设计定稿 + 已取证；实现与真机验收见 §6（全部 `未验证`）**
 日期：2026-11-03
 决策人：用户（m00324「作正式文档记录归档，然后开始吧」）；上一轮结论见 §1。

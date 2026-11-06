@@ -39,8 +39,8 @@ InboxMosire (Java, 通知板)  ──HTTP/SSE/MCP──▶  InboxMosire-Hermes (
    **唯一登记例外（2026-11-06，用户当次指令裁定，W5-1/W5-2）**：`inbox.push` 事件的
    `POST /v1/inboxes/{inbox}/deliveries/{deliveryId}/ack`。理由：正文已经由服务端渲染好并原样
    交给 Agent，ack 只表示「这条投递已经送到」，不 claim、不 complete 任何条目（`acked:false`
-   幂等返回）。该调用失败只 warning，绝不重投；实现见 `plugins/inbox-wake/lib/push.py`
-   的 `ack_delivery()` 与 `plugins/inbox-wake/lib/binding.py` 的 `_ack_delivery()`。
+   幂等返回）。该调用失败只 warning，绝不重投；实现见 `plugins/iibot-hermes/lib/wake/push.py`
+   的 `ack_delivery()` 与 `plugins/iibot-hermes/lib/wake/binding.py` 的 `_ack_delivery()`。
 5. 真实外发工具（`qq_conversation_send`、`conversation_send`、B 站评论私信、好友审批）
    在协调/开发工作区禁止启用；插件侧的门禁只是兜底，不是授权。
 6. 不新增固定家目录绝对路径：插件根从 `__file__` 推导，数据目录用 `ctx.state`，
@@ -49,9 +49,10 @@ InboxMosire (Java, 通知板)  ──HTTP/SSE/MCP──▶  InboxMosire-Hermes (
 ## 4. 目录约定
 
 ```
-plugins/<id>/__init__.py     # register(ctx)：唯一入口
-plugins/<id>/plugin.yaml     # manifest（v2）
-plugins/<id>/lib/            # 纯逻辑，import 时不触碰宿主
+plugins/iibot-hermes/__init__.py   # register(ctx)：唯一入口（wake + prompt + persona 三段装配）
+plugins/iibot-hermes/plugin.yaml    # manifest（v2，name: iibot-hermes）
+plugins/iibot-hermes/lib/{wake,prompt,persona}/  # 纯逻辑，import 时不触碰宿主
+plugins/iibot-hermes/lib/settings.py # 设置分段 + 旧命名空间只读回落
 tests/                       # unittest（pytest 也能跑）；纯函数优先，宿主用手写 fake ctx（tests/_loader.py）
 scripts/install.sh           # 装插件 → 写 adapter token(0600) → config set 设置 → doctor 体检
 docs/                        # 设计/对齐/能力/工具/验收
@@ -74,8 +75,7 @@ docs/                        # 设计/对齐/能力/工具/验收
 ```bash
 python3 -m compileall plugins           # 语法
 python3 -m unittest discover -s tests   # 单测（纯逻辑 + fake ctx；pytest 亦可）
-hermes plugins doctor persona-mode      # manifest/register/registry 漂移
-hermes plugins doctor inbox-wake
+hermes plugins doctor iibot-hermes      # manifest/register/registry 漂移
 ```
 
 `hermes` CLI 需要能写 `$HERMES_HOME/installs/*`；在受限 shell 里会报
