@@ -130,6 +130,10 @@ for id in "${LEGACY_PLUGIN_IDS[@]}"; do
     continue
   fi
   cp -a "$PLUGINS_DIR/$id" "$BACKUP_DIR/$id-$STAMP"
+  # 先停用再删目录：host 是 opt-in，旧 id 留在 plugins.enabled 里会一直报 unknown plugin
+  if command -v "$HERMES_BIN" >/dev/null 2>&1; then
+    "$HERMES_BIN" plugins disable "$id" >/dev/null 2>&1 && ok "已停用 $id" || true
+  fi
   rm -rf "$PLUGINS_DIR/$id"
   ok "已备份并删除 $id（旧目录留着会同进程双重注册）"
 done
@@ -167,6 +171,17 @@ done
 if [ "$DRY_RUN" = "1" ]; then
   log "dry-run 结束，未改动任何文件"
   exit 0
+fi
+
+# ---- 启用新插件（host 是 opt-in：只装目录不 enable 等于没装）----------------
+if command -v "$HERMES_BIN" >/dev/null 2>&1; then
+  if "$HERMES_BIN" plugins enable iibot-hermes >/dev/null 2>&1; then
+    ok "已启用 iibot-hermes"
+  else
+    warn "自动启用失败（首次启用会询问权限）。请手动执行：hermes plugins enable iibot-hermes"
+  fi
+else
+  warn "PATH 里没有 $HERMES_BIN，跳过启用；请手动：hermes plugins enable iibot-hermes"
 fi
 
 # ---- 配置键自检（只补缺，不覆盖用户已设的值）-----------------------------
@@ -212,3 +227,29 @@ cat <<'TIP'
   日志里应看到 push.ok / push.ack / guide.sent，且不应再出现 wake.ok（那是 changed 路径）。
   回滚：./scripts/upgrade.sh --rollback
 TIP
+
+cat <<'NEXT'
+  设置仍读旧命名空间（只读回落，会打 WARNING）。要彻底搬干净，逐条执行下面这些
+  （值取自你原来的 plugins.entries.inbox-wake.settings，按需改）：
+
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.enabled true
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.apiUrl http://127.0.0.1:46500
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.inboxId iibot-bot
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.adapterTokenFile file:/home/cna/DevMosire-iiBot/bot2/data/inbox/dsh-wake.token
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.pushMode on
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.wakeMode view-ack
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.wakeProfile iibot
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.autoBind true
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.debounceMs 1500
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.pollSeconds 60
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.sseReadTimeoutSeconds 600
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.wakeContentMaxChars 30000
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.wakeContentTotalChars 60000
+    hermes config set --force plugins.entries.iibot-hermes.settings.inbox.summaryMaxItems 20
+    hermes config set --force plugins.entries.iibot-hermes.allow_gateway_injection true
+
+  然后删掉旧段并重启：
+    hermes config unset plugins.entries.inbox-wake
+    hermes config unset plugins.entries.persona-mode
+    hermes gateway stop && sleep 2 && hermes gateway start
+NEXT
