@@ -363,3 +363,12 @@ provider 没有义务报错：它安静地丢掉不懂的块，模型只收到�
 - 不去重：同一请求里两条 tool 消息带同一张图就搬两张（由上限兜底）。
 - 不管 `auxiliary.vision`：配了辅助视觉后端时宿主走 `vision_analyze` 的文本路径，与这里无关。
 - 不碰 `role="user"` 里已有的图：那是合规形状，搬它只会打乱顺序。
+- **不抓消息正文里的图片 URL**（2026-11-07 决定）。覆盖范围以「**工具返回图片内容**」为准：
+  任何工具（MCP `ImageContent`、`vision_analyze`、以及未来任何返回 `_multimodal` 的工具）产出的图
+  都走本链路，不需要为每个工具单独适配。不做的理由有两条：①DeepSeek 虽支持外部 http(s) URL
+  （服务端代下，URL ≤8192 字符 / 图 ≤32MiB / 60 s 内下完），但实测公网图会直接 400——
+  `Failed to download image from https://upload.wikimedia.org/…/PNG_transparency_demonstration_1.png`，
+  所以不能把「链接能看」押在服务端代下上；②自己抓就得把网络 IO 塞进出站路径（与
+  `AGENTS.md`「hook 里不做网络 IO」相悖），还要自带 SSRF 守卫、缓存与延迟预算。真要做到
+  「消息里有链接就能看」，正确的位置是入站侧链路 B（iiBot 随 push 带 `media_urls`，宿主
+  `inject_message` 接受后图天然落在 user 消息里），而不是出站中间件。

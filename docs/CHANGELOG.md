@@ -57,7 +57,9 @@ docstring：`{"request": {...}}` replaces the provider kwargs）；②调用点�
 
 **没做的。** 不重新下载/缓存图片（只整形已有 payload，不连网）；不把搬过去的图写回会话历史
 （落库仍由宿主的 `[screenshot]` 摘要负责，`agent/tool_dispatch_helpers.py:508`）；不做 execution
-类中间件。
+类中间件；**不抓消息正文里的图片 URL**——覆盖范围以「工具返回图片内容」为准（任何
+`ImageContent` / `_multimodal` 工具都走同一条链路），理由与替代方案见
+`docs/DESIGN.md` §6「边界（不做的）」最后一条。
 
 ## 0.4.0 (2026-11-07) —— 三合一：`plugins/iibot-hermes`
 
