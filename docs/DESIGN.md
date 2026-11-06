@@ -1,12 +1,13 @@
 # 设计
 
-> **0.4.0 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 0.4.0 条目。
+> **0.4.0 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,vision,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 0.4.0 条目。第 6 节（vision，0.4.0-fix1 新增）写的是合并**之后**才有的图片搬运，设置键为 `plugins.entries.iibot-hermes.settings.vision.*`。
 
 ## 1. 位置
 
 ```
 Hermes 进程
 ├── minimal-system 插件     ── llm_request ──▶ 把整段 system prompt 换成一句常量（宿主补丁的兜底实现）
+├── vision 中间件（同一插件）── llm_request ──▶ 把 tool/assistant/system 消息里的图片搬进紧随其后的 user 消息（0.4.0-fix1）
 ├── persona-mode 插件        ── 读 PERSONA.md ──▶ pre_llm_call 注入角色行 + 人设契约（按 hash 去重/重锚）
 │                                             └▶ 角色模式只有这一条路：system 由 minimal-system / 宿主 override 负责
 └── inbox-wake 插件
@@ -304,3 +305,61 @@ iiBot 启动时无条件重签两份凭据（`BotInboxRuntime.java:125-146`：`i
 
 代价与边界：多一次 stat/读小 JSON（只在 401、绑定、启动时发生）；轮换后第一次唤醒晚一个 RTT。
 不做的：不猜端口、不扫目录、不去解析 iiBot 的进程参数——路径来自配置 + 同目录描述文件这两个显式来源。
+
+## 6. vision：图片必达（0.4.0-fix1）
+
+**症状。** 模型说「看不到图 / 只回 loaded」，但工具明明成功了。远程官方 `v0.22.6`（tag
+`f0d94882e8`）的 `state.db` 里：`content` / `api_content` 中含 `image_url` 的消息 **0 条**；
+9 次成功的 `qq_media_get`（2026-11-05）只留下 `MEDIA:/home/ubuntu/.hermes/cache/images/img_*.jpg`
+文本；模型能复述「图片是 418×418」（元数据里有），却描述不了画面。
+
+**机理。** Hermes 把图挂在 **tool 消息** 的 `content` 列表里：
+
+- `tools/vision_tools.py:573 _native_tool_result_images(provider, model, cfg)`：模型被判为有视觉时，
+  `vision_analyze` 返回 `{"_multimodal": True, "content": [text, image_url], ...}`；
+- `tools/mcp_tool_content.py:176 _mcp_result_with_native_images`：MCP `ImageContent` 同理；
+- `agent/tool_executor.py:1156 _tool_content = agent._tool_result_content_for_active_model(...)` →
+  `make_tool_result_message(...)`，图就落在 tool 行。
+
+但 OpenAI Chat Completions 的 `ChatCompletionToolMessageParam.content` 是
+`Union[str, Iterable[TextParam]]`——没有图片成员；DeepSeek 视觉文档更进一步：「图片仅支持出现在
+**user** 消息中。system 或 assistant 消息携带图片会返回 400 错误。」
+provider 没有义务报错：它安静地丢掉不懂的块，模型只收到那句
+"Image loaded into your context — you can see it natively now."。
+
+官方 tag 里**没有**把图提升成 user 行的逻辑；本机 `v0.22.5+3378.g178997d` 能看图，是因为
+`agent/tool_dispatch_helpers.py:373 hoist_tool_result_images`（本仓库维护的宿主补丁）会重写 tool
+消息并在其后插一条 `display_kind: hidden` 的 user 行。换成纯官方 build 就失效。
+
+**不变式。** 任何一条出站请求里，图片只出现在 `role="user"` 消息中。
+
+**实现。** `plugins/iibot-hermes/lib/vision/hoist.py` 是纯函数（不读配置、不连网、不改入参）：
+
+1. 认 `messages`（Chat）与 `input`（Responses，含 `function_call_output.output`）两种容器；
+2. 跳过 `role=="user"` 的消息，其余消息的 `content` / `output` 列表里把
+   `image_url` / `input_image` / `image`（`hoist.py:39 IMAGE_PART_TYPES`）摘出来，原位置留一条文本占位；
+3. 在**最后一条带图消息之后**插一条 `role="user"`：`[{text}, *images]`（`hoist.py:200 hoist_images_to_user`）；
+4. 只留最近的 `vision.maxImages` 张（默认 4），更旧的丢弃并计入 `dropped`。
+
+`__init__.py:445 _vision_on_llm_request` 把它挂成第二个 `llm_request` 中间件
+（`__init__.py:489 _register_vision` 注册 → `hermes_cli/plugins.py:939 register_middleware` →
+`hermes_cli/middleware.py:88 apply_llm_request_middleware` → `agent/turn_api_request.py:156-166`
+`api_kwargs = _llm_request_mw.payload`）。与 prompt 那条互不重叠：prompt 只碰
+`messages[0].role=="system"` 的文本，vision 只碰非 user 消息里的图片块。
+
+**为什么默认开。** ①无图时 `hoist_images_to_user()` 返回**原对象**，中间件返回 `None`，请求逐字节
+不变；②宿主已带 `hoist_tool_result_images` 补丁时图已在 user 行里，同样是 no-op；③真实代价只有
+「每轮多一次线性扫消息列表」。**关掉的条件**只有一个：操作者故意让图留在 tool 行
+（`agent.tool_result_images: inline`），那就 `vision.enabled: false`。
+
+**护栏。** 搬完立刻 `images_outside_user()`（`hoist.py:130`）自检，仍有漏网 → WARNING 并照发
+（fail-open）；超过上限丢弃 → WARNING（降级必须留痕，见 `AGENTS.md`）；任何异常 → WARNING
+`iibot-hermes vision: hoist failed, sending the request unmodified: …` 并返回 `None`。
+
+**边界（不做的）。**
+- 不重新下载/缓存图片：中间件只整形已有 payload，不连网（图早已在 `content` 里）。
+- 不把搬过去的图写回会话历史：落库仍由宿主的 `_durable_content` / `[screenshot]` 摘要负责
+  （`agent/tool_dispatch_helpers.py:508`）。
+- 不去重：同一请求里两条 tool 消息带同一张图就搬两张（由上限兜底）。
+- 不管 `auxiliary.vision`：配了辅助视觉后端时宿主走 `vision_analyze` 的文本路径，与这里无关。
+- 不碰 `role="user"` 里已有的图：那是合规形状，搬它只会打乱顺序。

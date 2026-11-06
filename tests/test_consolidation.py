@@ -19,6 +19,14 @@ settings_lib = _loader.settings_lib()
 TOKENLESS_INBOX = {"enabled": False}  # 不 resume、不开 SSE，register 只做装配
 
 
+def _prompt_middleware(ctx):
+    """``llm_request`` 上 prompt 那一条（vision 中间件默认也在，按身份挑）。"""
+    return [
+        callback for callback in ctx.middleware.get("llm_request", [])
+        if callback is plugin._prompt_on_llm_request
+    ]
+
+
 def register(ctx) -> None:
     plugin.register(ctx)
     if ctx.unload:
@@ -74,7 +82,12 @@ class NewInboxSettingsTests(unittest.TestCase):
 
 
 class DefaultOffTests(unittest.TestCase):
-    """③④ 默认配置什么都不接管：persona 两个 hook 不注册、``llm_request`` 不注册。"""
+    """③④ 默认配置不接管 persona / system prompt。
+
+    0.4.0-fix1 起 ``llm_request`` 上**始终**有 vision 中间件（把 tool 里的图搬进 user 消息，
+    默认开、无图是 no-op），所以这里的断言按身份看 prompt 那一条，而不是看 ``llm_request`` 键。
+    """
+
 
     def test_empty_settings_register_only_the_wake_surface(self) -> None:
         ctx = _loader.FakeCtx({"inbox": dict(TOKENLESS_INBOX)})
@@ -87,15 +100,17 @@ class DefaultOffTests(unittest.TestCase):
         self.assertNotIn("pre_tool_call", ctx.hooks)
         self.assertEqual(len(ctx.hooks["pre_llm_call"]), 1)
         self.assertIs(ctx.hooks["pre_llm_call"][0], plugin._on_pre_llm_call)
-        # ④ prompt.enabled 默认 false → 没有 llm_request 中间件
-        self.assertNotIn("llm_request", ctx.middleware)
+        # ④ prompt.enabled 默认 false → 不挂 prompt 中间件（vision 那条照挂）
+        self.assertEqual(_prompt_middleware(ctx), [])
+        self.assertEqual(len(ctx.middleware["llm_request"]), 1)
+        self.assertIs(ctx.middleware["llm_request"][0], plugin._vision_on_llm_request)
         self.assertFalse(plugin._prompt_config["enabled"])
         self.assertFalse(plugin._persona_config["enabled"])
 
-    def test_prompt_disabled_explicitly_registers_no_middleware(self) -> None:
+    def test_prompt_disabled_explicitly_registers_no_prompt_middleware(self) -> None:
         ctx = _loader.FakeCtx({"prompt": {"enabled": False}, "inbox": dict(TOKENLESS_INBOX)})
         register(ctx)
-        self.assertNotIn("llm_request", ctx.middleware)
+        self.assertEqual(_prompt_middleware(ctx), [])
 
     def test_persona_disabled_explicitly_registers_no_hooks(self) -> None:
         ctx = _loader.FakeCtx({"persona": {"enabled": False}, "inbox": dict(TOKENLESS_INBOX)})
@@ -112,8 +127,8 @@ class OptInTests(unittest.TestCase):
             {"prompt": {"enabled": True, "systemPrompt": "one line"}, "inbox": dict(TOKENLESS_INBOX)}
         )
         register(ctx)
-        self.assertEqual(list(ctx.middleware), ["llm_request"])
-        result = ctx.middleware["llm_request"][0](
+        self.assertEqual(len(_prompt_middleware(ctx)), 1)
+        result = _prompt_middleware(ctx)[0](
             request={"messages": [{"role": "system", "content": "host"}, {"role": "user", "content": "hi"}]},
             api_mode="chat_completions",
         )
@@ -141,7 +156,7 @@ class OptInTests(unittest.TestCase):
         text = "\n".join(logs.output)
         self.assertIn("iibot-hermes.settings.prompt", text)
         self.assertIn("iibot-hermes.settings.persona", text)
-        self.assertIn("llm_request", ctx.middleware)
+        self.assertEqual(len(_prompt_middleware(ctx)), 1)
         self.assertIn("pre_tool_call", ctx.hooks)
 
     def test_new_section_wins_over_legacy_for_prompt(self) -> None:
@@ -150,7 +165,7 @@ class OptInTests(unittest.TestCase):
             legacy={"minimal-system": {"enabled": True}},
         )
         register(ctx)
-        self.assertNotIn("llm_request", ctx.middleware)
+        self.assertEqual(_prompt_middleware(ctx), [])
 
 
 class StartupLogTests(unittest.TestCase):
@@ -176,6 +191,7 @@ class StartupLogTests(unittest.TestCase):
         self.assertIn("firstRunGuide=True", line[0])
         self.assertIn("prompt.enabled=False", line[0])
         self.assertIn("persona.enabled=False", line[0])
+        self.assertIn("vision.enabled=True", line[0])
 
     def test_legacy_gateway_flag_warns_about_the_new_key(self) -> None:
         ctx = _loader.FakeCtx(

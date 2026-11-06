@@ -78,6 +78,20 @@ start_failed, stopped, rest}`。
 不注册工具、不注册 hook，只注册 `register_middleware("llm_request")` 整段替换出站 system prompt。
 默认 `false`：system prompt 交给宿主的 `agent.system_prompt_override`。
 
+### vision 段工具面（默认开）
+
+不注册工具、不注册 hook，只注册第二条 `register_middleware("llm_request")`：出站前把
+**非 user 消息**（tool/assistant/system）里的 `image_url` / `input_image` / `image` 块摘出来，
+原消息换成占位文本，再在**最后一条带图消息之后**插一条 `role="user"`（`[{text}, *images]`，默认最多
+4 张）。没有可搬的图时返回 `None`，宿主请求逐字节不变。
+
+- 纯函数在 `lib/vision/hoist.py`（`hoist_images_to_user` 200、`images_outside_user` 130、`IMAGE_PART_TYPES` 39）。
+- 中间件在 `__init__.py`（`_vision_on_llm_request` 445、`_register_vision` 489）。
+- 与 prompt 那条互不重叠：prompt 只碰 `messages[0].role=="system"` 的文本。
+- 幂等、fail-open；超上限丢弃与「搬完仍有漏网」都打 WARNING（降级必须留痕）。
+- 关掉：`settings.vision.enabled=false`（只在宿主已带 `hoist_tool_result_images` 补丁、且操作者故意要
+  `agent.tool_result_images: inline` 时才需要）。
+
 ## 2. `/inbox` 命令
 
 ```
@@ -152,6 +166,18 @@ start_failed, stopped, rest}`。
 | `systemPrompt` | str | `You are a helpful software engineer assistant.` | 整段替换 system prompt 的回落值 |
 | `systemPromptFile` | str | `""` | 非空且可读时优先于 `systemPrompt`；留空 = `$HERMES_HOME/SYSTEM.md`，按 mtime 热更新 |
 | `logRewrite` | bool | `false` | 记录每次替换的形状/字数（不含内容与凭据） |
+
+### vision（`plugins.entries.iibot-hermes.settings.vision.*`，0.4.0-fix1 新增）
+
+`vision` 是 `NEW_SECTIONS`（`lib/settings.py:52`）里的新段，**没有** 0.x 回落；三段旧设置是只读回落，
+这里不存在这个问题。
+
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `enabled` | bool | `true` | 为真才注册 `llm_request` 中间件。无图时是 no-op；宿主带 `hoist_tool_result_images` 时也是 no-op |
+| `maxImages` | int | `4` | 单请求上限，夹到 1–16；超出的从**最旧**开始丢弃并打 WARNING |
+| `placeholder` | str | `""` | 原消息里留下的占位文本；空 = 内置常量 |
+| `logHoist` | bool | `false` | 每次搬运记 INFO（默认 debug）；只记数量与来源角色，不记图片内容 |
 
 ## 3a. 事件与注入形态
 

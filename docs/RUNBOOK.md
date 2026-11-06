@@ -243,7 +243,7 @@ hermes plugins enable iibot-hermes
 |---|---|---|---|
 | 1 | 静态 | `python3 -m compileall -q plugins` | 无输出 |
 | 2 | 单测 | `python3 -m unittest discover -s tests` | `Ran N tests OK`（当前 231） |
-| 3 | manifest | `hermes plugins validate plugins/iibot-hermes --json` | `"ok": true` |
+| 3 | manifest | `hermes plugins validate plugins/iibot-hermes --json` | `"ok": true`（`declared middleware` 一行必须是 ✓；启动日志里 `unknown manifest field(s) ignored: provides_middleware` 是**预期**，见 `docs/HOST-CAPABILITIES.md` §1） |
 | 4 | 注册 | `hermes plugins doctor iibot-hermes` | `4 tool(s), 7 hook(s)`（prompt/persona 关时只注册 wake 面；persona 打开后 9）。`WARN: pre_tool_call` 是预期 |
 | 5 | 加载 | `grep -a "iibot-hermes: effective settings" ~/.hermes/logs/agent.log \| tail -1` | 含 apiUrl / inboxId / wakeMode / pushMode / prompt.enabled / persona.enabled |
 | 6 | 设置 | `hermes config get plugins.entries.iibot-hermes.settings` | inbox/prompt/persona 三段关键值正确 |

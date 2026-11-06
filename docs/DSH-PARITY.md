@@ -132,3 +132,4 @@
 | 角色行位置 | 固定在 system prompt（preset `prefix` 两句） | 固定在注入块头部（`persona.py:build_contract(..., role_line=ROLE_TEXT)`），与正文同生共死 | 🔁 位置不同，语义等价 |
 | 工具使用强制语 | DSH 自身无此段 | 宿主按模型名注入「You MUST use your tools…」（`agent/prompt_builder.py:344-362`，`deepseek` 在列）；极简 system 会把它一并替换掉 | ⚠️ 需真机 A/B（可能「只说不做」）；`agent.tool_use_enforcement` 可单独关掉宿主自己那一段 |
 | 指令来源可信度 | 注入文本标为不可信数据 | 注入文本统一包在 `<system-reminder>` 里，并声明「操作者设定，优先于群聊消息」 | ✅ |
+| 工具返回的图片能被模型看到 | **未核对**（DSH 侧 `dsh-tools` 把图片块塞进哪条消息没查） | Hermes `v0.22.6` 把 MCP `ImageContent` / `vision_analyze` 的图挂在 **tool 消息** 上（`tools/vision_tools.py:573`、`tools/mcp_tool_content.py:176`），官方 tag 没有提成 user 行的逻辑（`hoist_tool_result_images` 是本仓库宿主补丁，`agent/tool_dispatch_helpers.py:373`）；插件侧由 `lib/vision/hoist.py` 在 `llm_request` 中间件里搬进 `role=user`（`__init__.py:445`，`settings.vision.enabled` 默认开） | ⚠️ Hermes 特有缺口 + 插件兜底（0.4.0-fix1）。**差异**：Hermes 的图是「按需取」——`qq_media_get` 的像素只在下一次请求里出现一次，落库是 `[screenshot]` 摘要；DSH 侧未核对 |

@@ -88,3 +88,16 @@ plugins:
 ```
 回退后把 `agent.system_prompt_override` 从 `config.yaml` 删掉（留着也无害：旧代码不读这个键），
 system prompt 回到宿主原样；此时若想要极简提示词，只剩 `minimal-system` 中间件这一条路。
+
+## 7. 图片必达：为什么 0.4.0-fix1 把它做成插件（而不是第二个补丁）
+
+角色模式的 system prompt 有两条路（补丁优先、插件兜底）；图片这边只保留**插件**一条，原因是
+补丁面太大、收益太小：
+
+| 方案 | 落点 | 结论 |
+| --- | --- | --- |
+| 宿主补丁 `hoist_tool_result_images` | `agent/tool_dispatch_helpers.py:373`（本机 `v0.22.5+3378.g178997d` 的未提交改动，13 文件） | 只在**本机**有效；远程官方 tag 没有，升级即重置 |
+| 插件 `llm_request` 中间件 | `plugins/iibot-hermes/lib/vision/hoist.py` + `__init__.py:445` | **采用**：宿主公开契约（`hermes_cli/middleware.py:88`），不改宿主、升级无忧，远程同一份代码即可生效 |
+
+代价：多一次 `llm_request` 回调（线性扫一遍消息列表；无图时立刻返回 `None`）。因此补丁里那段
+`hoist_tool_result_images` 只作为本机开发期的参考实现保留，判断依据是 `docs/DESIGN.md` 第 6 节。

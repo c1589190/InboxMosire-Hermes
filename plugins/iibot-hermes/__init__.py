@@ -8,6 +8,8 @@
   system prompt（公开 ``llm_request`` 中间件）。
 * ``lib/persona/`` ← ``plugins/persona-mode`` 0.2.0：角色行 + ``PERSONA.md`` 合成一条
   ``pre_llm_call`` 注入（hash 去重、压缩后重锚），缺文件时封禁外发工具。
+* ``lib/vision/``  ← 0.4.0-fix1 新增：用 ``llm_request`` 中间件把 tool 消息里的图片搬进
+  ``role="user"`` 消息（OpenAI/DeepSeek 的协议只认 user 里的图），默认**开着**，无图时是 no-op。
 
 **对外契约与 0.x 逐字一致**：工具名/toolset、``/inbox``、hook 语义、``inbox.push`` 正文、ack、
 首条引导、``pushMode``/``pushGraceMs`` 全部照旧；变的是"装在哪"和"设置在哪一段"。
@@ -20,12 +22,17 @@
               wakeContentTotalChars, summaryMaxItems, ...}
     prompt:  {enabled, systemPrompt, systemPromptFile, logRewrite}
     persona: {enabled, personaFile, maxChars, outboundGuard, outboundTools, denyTools}
+    vision:  {enabled, maxImages, placeholder, logHoist}
 
 ``prompt.enabled`` / ``persona.enabled`` 默认 **false**：
 
 * 宿主的 ``agent.system_prompt_override``（``patches/0001-…``）与 ``prompt`` 的中间件是同一目的的
   两种实现，同时开会让两处互相覆盖 —— 操作者二选一。
 * D-009 已取消人设注入；模块保留，打开后行为与 persona-mode 0.2.0 一致。
+
+``vision.enabled`` 默认 **true**：它只改「图在哪种消息里」，无图时逐字节不动请求；与宿主补丁
+``hoist_tool_result_images`` 并存时是 no-op（图已经在 user 行里）。关掉它的理由只有「我不想要插件
+碰我的 payload」。
 
 ``allow_gateway_injection`` 仍在 ``plugins.entries.iibot-hermes`` 一级（不在 ``settings`` 里），
 迁移脚本负责从旧位置搬过来；宿主只读本插件自己的 entry，所以插件在启动时对仍留在旧位置的值
@@ -45,6 +52,7 @@ from .lib import settings as settings_lib
 from .lib.persona import guard as guard_lib
 from .lib.persona import persona as persona_lib
 from .lib.prompt import prompt_file, rewrite
+from .lib.vision import hoist as vision_hoist
 from .lib.wake import binding as binding_lib
 from .lib.wake import commands as commands_lib
 from .lib.wake import tools as tools_lib
@@ -53,7 +61,7 @@ from .lib.wake.state import Store
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.0"
+__version__ = "0.4.0-fix1"
 
 
 def _flag(value: Any, default: bool) -> bool:
@@ -405,6 +413,99 @@ def _register_prompt(ctx: Any) -> None:
 
 
 # --------------------------------------------------------------------------------------
+# vision（0.4.0-fix1）：把非 user 消息里的图片搬进 user 消息
+# --------------------------------------------------------------------------------------
+
+_vision_config: dict[str, Any] = {
+    "enabled": True,
+    "maxImages": vision_hoist.MAX_IMAGES,
+    "placeholder": vision_hoist.DEFAULT_PLACEHOLDER,
+    "logHoist": False,
+}
+
+
+def _vision_load_config(ctx: Any) -> None:
+    """读 ``settings.vision``；读不到就用默认值（默认开着，理由见 docs/DESIGN.md 第 6 节）。"""
+    try:
+        section = settings_lib.load_section(ctx, "vision")
+    except Exception as exc:  # never let config trouble break registration
+        logger.warning("iibot-hermes vision: cannot read settings, using defaults: %s", exc)
+        section = {}
+    _vision_config["enabled"] = _flag(section.get("enabled"), True)
+    try:
+        max_images = int(section.get("maxImages", vision_hoist.MAX_IMAGES))
+    except (TypeError, ValueError):
+        max_images = vision_hoist.MAX_IMAGES
+    _vision_config["maxImages"] = max(1, min(16, max_images))
+    placeholder = str(section.get("placeholder") or "").strip()
+    _vision_config["placeholder"] = placeholder or vision_hoist.DEFAULT_PLACEHOLDER
+    _vision_config["logHoist"] = _flag(section.get("logHoist"), False)
+
+
+def _vision_on_llm_request(**kwargs: Any) -> Optional[dict[str, Any]]:
+    """Move images out of non-user roles of one outbound request; ``None`` leaves it untouched.
+
+    无图 → 返回 ``None``（宿主请求逐字节不变）；有图 → 返回替换后的 payload。任何异常都
+    fail-open：宁可让这一次请求按原样发出去，也不能让中间件把一轮对话弄挂。
+    """
+    try:
+        if not _vision_config["enabled"]:
+            return None
+        result = vision_hoist.hoist_images_to_user(
+            kwargs.get("request"),
+            max_images=int(_vision_config["maxImages"]),
+            placeholder=str(_vision_config["placeholder"]),
+        )
+        if not result.changed:
+            return None
+        if _vision_config["logHoist"]:
+            logger.info("iibot-hermes vision: %s (api_mode=%s)", result.reason(), kwargs.get("api_mode"))
+        else:
+            logger.debug("iibot-hermes vision: %s", result.reason())
+        if result.dropped:  # 丢弃是降级，必须留痕（AGENTS.md）
+            logger.warning(
+                "iibot-hermes vision: dropped %d image(s) above vision.maxImages=%s "
+                "(kept the %d most recent): 调大上限或让模型分次看图",
+                result.dropped, _vision_config["maxImages"], result.moved,
+            )
+        offenders = vision_hoist.images_outside_user(result.request)
+        if offenders:  # 已经尽力；仍然发出去，但把位置写进日志便于排查
+            logger.warning(
+                "iibot-hermes vision: images still outside user messages after hoist: %s",
+                "; ".join(offenders[:4]),
+            )
+        return {
+            "request": result.request,
+            "source": "iibot-hermes-vision",
+            "reason": result.reason(),
+        }
+    except Exception as exc:  # a middleware bug must not take the turn down
+        logger.warning(
+            "iibot-hermes vision: hoist failed, sending the request unmodified: %s", exc
+        )
+        return None
+
+
+def _register_vision(ctx: Any) -> None:
+    """默认挂上：无图时是 no-op，有图时把 payload 改回协议认可的形状。"""
+    _vision_load_config(ctx)
+    if not _vision_config["enabled"]:
+        logger.info("iibot-hermes vision: disabled (vision.enabled=false)")
+        return
+    try:
+        ctx.register_middleware("llm_request", _vision_on_llm_request)
+    except Exception as exc:  # an old host without request middleware: say so, never crash
+        logger.warning("iibot-hermes vision: llm_request middleware unavailable: %s", exc)
+        return
+    logger.info(
+        "iibot-hermes vision: loaded (maxImages=%s, placeholder=%s, logHoist=%s)",
+        _vision_config["maxImages"],
+        "custom" if _vision_config["placeholder"] != vision_hoist.DEFAULT_PLACEHOLDER else "default",
+        bool(_vision_config["logHoist"]),
+    )
+
+
+# --------------------------------------------------------------------------------------
 # persona（原 plugins/persona-mode）
 # --------------------------------------------------------------------------------------
 
@@ -589,15 +690,18 @@ def register(ctx: Any) -> None:
     """Hooks + middleware + 4 tools + ``/inbox``, all in one plugin.
 
     顺序固定：wake 先注册（``pre_llm_call`` 里唤醒适配器永远第一），prompt 中间件按开关挂，
-    persona 两个 hook 按开关挂。
+    vision 中间件默认挂，persona 两个 hook 按开关挂。两个 ``llm_request`` 中间件互不重叠：
+    prompt 只碰 ``messages[0].role=="system"`` 的文本，vision 只碰非 user 消息里的图片块。
     """
     config = _register_wake(ctx)
     _register_prompt(ctx)
+    _register_vision(ctx)
     _register_persona(ctx)
     _warn_legacy_gateway_flag(ctx)
     logger.info(
         "iibot-hermes: effective settings apiUrl=%s inboxId=%s wakeMode=%s pushMode=%s "
-        "firstRunGuide=%s prompt.enabled=%s persona.enabled=%s",
+        "firstRunGuide=%s prompt.enabled=%s persona.enabled=%s vision.enabled=%s",
         config.api_url, config.inbox_id, config.wake_mode, config.push_mode,
         config.first_run_guide, bool(_prompt_config["enabled"]), bool(_persona_config["enabled"]),
+        bool(_vision_config["enabled"]),
     )

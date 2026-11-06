@@ -12,6 +12,10 @@
 |---|---|---|
 | 注册工具 | `hermes_cli/plugins.py:463` `register_tool(name, toolset, schema, handler, check_fn=None, requires_env=None, is_async=False, description="", emoji="", override=False)` | 覆盖内置工具需 `plugins.entries.<id>.allow_tool_override` |
 | 注册 hook | `hermes_cli/plugins.py:935` `register_hook(hook_name, callback, *, hold_stream=False)` | 合法名 = `hermes_cli.plugins.VALID_HOOKS`；回调必须吃 `**kwargs` |
+| 注册中间件（可**改写**请求） | `hermes_cli/plugins.py:939` `register_middleware(kind, callback)` | `kind ∈ {tool_request, tool_execution, llm_request, llm_execution}`（`hermes_cli/middleware.py:24-25` `VALID_MIDDLEWARE`）；与 hook 的区别见模块 docstring：「Observer hooks report what happened. **Middleware can change what happens**」 |
+| 改写出站 payload | `hermes_cli/middleware.py:88` `apply_llm_request_middleware(request, **context)` | 回调返回 `{"request": {...}}` 即替换 provider kwargs（逐个中间件串联，`_apply_request_chain`）；调用点 `agent/turn_api_request.py:156-166`（`api_kwargs = _llm_request_mw.payload`），异常时 `logger.warning("LLM request middleware failed; sending the request unmodified")` 并原样发送 |
+| 中间件登记查询 | `hermes_cli/plugins.py:1825` `invoke_middleware` / `:1834` `has_middleware` | 同一 `kind` 可挂多个回调，按注册顺序执行 |
+| 图片块判定 | `agent/vision_message_prep.py:29` `_IMAGE_PART_TYPES = {"image_url", "input_image"}` | 本插件的 `lib/vision/hoist.py:39` 另收 Anthropic 风格的 `image`，并同时认 Responses 的 `output` 槽 |
 | system prompt 段 | `hermes_cli/plugins.py:959` `register_system_prompt_section(id, content, *, position="after_memory", max_chars=4000)` | `id` 1–128 位小写标识符；`content` 可为 `Callable[[Mapping], str]`；**每 session 只渲染一次并冻结** |
 | 段上限 | `hermes_cli/plugins_dispatch.py:98-102` | `positions={"after_memory"}`、单段 ≤4000、总 ≤8000 字符、≤32 段（超限跳过并 warning，`:671`/`:682`） |
 | 注入会话消息 | `hermes_cli/plugins.py:588` `inject_message(content, role="user", *, session_key=None, origin=None) -> bool` | 实现 `hermes_cli/plugins_injection.py:11` |
@@ -22,6 +26,7 @@
 | 插件设置读写 | `hermes_cli/plugins.py:266` `get_config(key, default)` / `:278` `set_config` | 读 `plugins.entries.<id>.settings.<key>`，回退旧 `config` 子树 |
 | 插件私有状态 | `hermes_cli/plugins.py` → `ctx.state`（`PluginState(plugin_id, manifest.data_namespace)`） | JSON facade，落 `<HERMES_HOME>/plugin-data/<id>/` |
 | manifest v2 | `hermes_cli/plugins_manifest.py:36` | 含 `config_schema`（`:142-155` 只收 mapping 条目并校验 `type`）、`python_dependencies`、`api_version`、`requires_plugins` |
+| manifest 声明中间件 | 声明：`provides_middleware: ["llm_request"]`（校验器 `hermes_cli/plugin_validate.py:438` 要求）；加载器 `hermes_cli/plugins_manifest.py:31-40` 的 `_KNOWN_MANIFEST_FIELDS` **不含**该键 | 每次解析 manifest 会打一条 `unknown manifest field(s) ignored: provides_middleware`（`plugins_manifest.py:196`，mv≥2 是 warning）。两害相权取校验器：`docs/RUNBOOK.md` 第 3 步要求 `validate` 为 `ok`。这条 warning 是**预期输出** |
 | MCP 挂载 | `mcp_servers.<name>.url` + `headers`（`tools/mcp_tool_transport.py:119`、`tools/mcp_tool_config.py:591`）、`tools.exclude` | 可挂 InboxMosire 的 HTTP MCP 端点 |
 | 手工校验 | `hermes plugins doctor [path-or-id] [--ci]`、`hermes plugins validate <path> --install-deps` | 临时 HERMES_HOME，检查 manifest/registry 漂移 |
 
@@ -37,6 +42,7 @@
 | panel 挂载/卸载 → suspend/resume | 无 panel | 不实现；会话结束/重置/reset 时停 SSE |
 | config 里的 `${ENV}` 插值 | 未发现（`hermes_cli` config 加载不做展开） | token 走**文件路径**（`adapterTokenRef`），MCP 那行必须写明文 token → config.yaml 需 0600 |
 | 项目内 `./.hermes/plugins/` 自动加载 | gateway 只在进程启动时发现一次插件 | 必须装到 `$HERMES_HOME/plugins/<id>/` 并在 `config.yaml` `plugins.enabled` 里点名 |
+| 工具结果里的图片能让模型看到 | 官方 tag（`v0.22.6` / `f0d94882e8`）把 MCP `ImageContent`、`vision_analyze` 的图挂在 **tool 消息** 的 `content` 列表里（`tools/vision_tools.py:573`、`tools/mcp_tool_content.py:176`），没有提成 user 行的逻辑（`hoist_tool_result_images` 是本仓库的宿主补丁，`agent/tool_dispatch_helpers.py:373`） | `lib/vision/hoist.py` 在 `llm_request` 中间件里搬进紧随其后的 `role=user` 消息（`settings.vision.enabled` 默认开）；机理见 `docs/DESIGN.md` 第 6 节 |
 
 ## 3. hook 语义要点
 

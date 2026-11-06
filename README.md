@@ -61,7 +61,7 @@ cp kit.env.example kit.env        # 改 jar 路径 / 数据目录 / 端口
 
 | 组件 | 作用 | 依赖宿主面 |
 |---|---|---|
-| `plugins/iibot-hermes` | **唯一插件**（0.4.0 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并）。三段能力：`lib/wake/` 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令；`lib/prompt/` 一句式 system prompt（`llm_request` 中间件，**默认关**，宿主 `agent.system_prompt_override` 优先）；`lib/persona/` 人设契约注入（`pre_llm_call` + `pre_tool_call` 守卫，**默认关**，D-009） | `inject_message` / `register_tool` / `register_command` / `register_middleware("llm_request")` / `pre_llm_call` / `pre_tool_call` / `post_llm_call` / `post_tool_call` / `on_session_*` |
+| `plugins/iibot-hermes` | **唯一插件**（0.4.0 由 `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并）。三段能力：`lib/wake/` 每 session 独立 binding、SSE 订阅 + 对账轮询、`inbox.push` 正文直投 + 立即 ack、`inbox.changed` 有界摘要唤醒、4 个工具 + `/inbox` 命令；`lib/prompt/` 一句式 system prompt（`llm_request` 中间件，**默认关**，宿主 `agent.system_prompt_override` 优先）；`lib/persona/` 人设契约注入（`pre_llm_call` + `pre_tool_call` 守卫，**默认关**，D-009）；`lib/vision/` **图片必达**（0.4.0-fix1，`llm_request` 中间件把 tool/assistant/system 消息里的图片搬进紧随其后的一条 `role=user` 消息，**默认开**，无图时请求逐字节不变） | `inject_message` / `register_tool` / `register_command` / `register_middleware("llm_request")` / `pre_llm_call` / `pre_tool_call` / `post_llm_call` / `post_tool_call` / `on_session_*` |
 | `kit/` | 一键发行包：`kit.sh`（doctor/up/status/down/probe/token）+ `kit.env.example` + `引导.md` | 只用宿主 CLI 与 InboxMosire jar |
 
 ---
@@ -136,10 +136,11 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 | `plugins.entries.iibot-hermes.settings.inbox.inboxId` | `main` | 订阅哪个通知板 |
 | `plugins.entries.iibot-hermes.settings.inbox.adapterTokenFile` | `file:/path/to/api-token` | **0600 文件**，`inline:` 一律拒绝 |
 
-设置分三段：`settings.inbox.*`（唤醒，键名同旧 `inbox-wake.settings.*`）、`settings.prompt.*`、
-`settings.persona.*`。整段缺失时会**只读回落**到旧命名空间（`plugins.entries.inbox-wake.settings` /
+设置分四段：`settings.inbox.*`（唤醒，键名同旧 `inbox-wake.settings.*`）、`settings.prompt.*`、
+`settings.persona.*`、`settings.vision.*`（0.4.0-fix1 新增，无 0.x 前身）。前三段整段缺失时会
+**只读回落**到旧命名空间（`plugins.entries.inbox-wake.settings` /
 `plugins.entries.minimal-system.settings` / `plugins.entries.persona-mode.settings`）并打一条 WARNING，
-迁移步骤见 `docs/INSTALL.md`。
+迁移步骤见 `docs/INSTALL.md`。`vision` 没有旧命名空间，缺省即用默认值。
 
 常改的几个：
 
@@ -168,6 +169,18 @@ CLI / TUI 只是客户端，看到的是这一轮的输出
 | `plugins.entries.iibot-hermes.settings.persona.enabled` | `false` | 打开才注册 `pre_llm_call`（角色行 + `PERSONA.md` 契约，按 hash 去重、压缩后重锚）与 `pre_tool_call` 守卫（`denyTools` / 缺文件封禁外发）。D-009 之后人设改由首条 inbox 引导读 `AGENTS.md` / `PERSONA.md` |
 | `…settings.persona.personaFile` | `PERSONA.md` | 绝对路径，或相对调用会话的工作目录 |
 | `…settings.persona.maxChars` / `outboundGuard` / `outboundTools` / `denyTools` | `4000` / `true` / 两个发送工具 / `[]` | 与 persona-mode 0.2.0 同义 |
+
+### vision（0.4.0-fix1 起默认开）
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `plugins.entries.iibot-hermes.settings.vision.enabled` | `true` | 出站前把**非 user 消息**里的图片搬进紧随其后的 `role=user` 消息。OpenAI 的 tool 消息只允许文本块、DeepSeek 视觉文档只认 user 消息；官方 tag 会把 MCP/`vision_analyze` 的图挂在 tool 行，provider 静默丢像素（模型只看到 "Image loaded"）。无图时逐字节不变；宿主带 `hoist_tool_result_images` 补丁时是 no-op |
+| `…settings.vision.maxImages` | `4` | 单请求上限（1–16）；超出的从最旧开始丢弃并打 WARNING |
+| `…settings.vision.placeholder` | `""` | 原消息里留下的占位文本；空 = 内置「[图片已移出本消息，见随后那条 user 消息]」 |
+| `…settings.vision.logHoist` | `false` | 每次搬运记一条 INFO（默认 debug）；只记数量与来源角色 |
+
+排查顺序：`scripts/check-vision.py` 查「宿主有没有声明视觉 + route 吃不吃图」；本中间件查第三层
+「图有没有被挂在 tool 消息里」。机理见 `docs/DESIGN.md` 第 6 节，验收见 `docs/ACCEPTANCE.md` 的 Q 段。
 
 另外 Hermes **没有** `register_mcp_server`，业务 MCP 只能写配置：
 `hermes config set mcp_servers.<name>.url/.transport/.headers.Authorization`。
@@ -238,6 +251,7 @@ hermes plugins doctor iibot-hermes           # 4 tool(s), 7 hook(s)（prompt/per
 4. MCP 服务 keepalive 抖动（`MCPError: Session terminated`）会让业务工具在新会话里缺席，重启 gateway 后重新注册。
 5. 一次性/CLI 进程**不能**建立绑定（`NO_INJECT_HOST`）：它们投递不了唤醒，绑定只会变成僵尸。
 6. 人设门禁的两个 QQ 工具名在本机不存在，真机拦截用例为 `NOT_RUN`（仅单测覆盖）。
+7. 图片必达只整形**出站请求**：图仍然只在下一次 API 调用里出现一次，落库仍是 `[screenshot]` 摘要；重新取图要靠业务 MCP（`qq_media_get`）。真机用例（Q6/Q7）需在维护窗口部署后验证。
 
 ---
 

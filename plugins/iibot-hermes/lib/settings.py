@@ -1,10 +1,15 @@
-"""Where ``iibot-hermes`` reads its three settings sections (and the legacy fallback).
+"""Where ``iibot-hermes`` reads its four settings sections (and the legacy fallback).
 
 The plugin owns exactly one namespace now::
 
     plugins.entries.iibot-hermes.settings.inbox    # wake adapter
     plugins.entries.iibot-hermes.settings.prompt   # system-prompt rewrite
     plugins.entries.iibot-hermes.settings.persona  # role-play injection / guard
+    plugins.entries.iibot-hermes.settings.vision   # images -> user message (0.4.0-fix1)
+
+``vision`` is the one section with **no** 0.x predecessor: before 0.4.0-fix1 the same
+behaviour lived in a host patch (``agent/tool_dispatch_helpers.py:373
+hoist_tool_result_images``), so there is nothing to fall back to (``NEW_SECTIONS``).
 
 Before 1.0.0 those sections were three plugins with their own entries
 (``plugins.entries.inbox-wake.settings`` / ``minimal-system`` / ``persona-mode``).
@@ -42,7 +47,11 @@ LEGACY_IDS: dict[str, str] = {
     "persona": "persona-mode",
 }
 
-SECTIONS: tuple[str, ...] = tuple(LEGACY_IDS)
+#: Sections this plugin introduced itself: no 0.x predecessor, so no legacy fallback
+#: (``vision`` landed in 0.4.0-fix1; before that the same behaviour was a host patch).
+NEW_SECTIONS: tuple[str, ...] = ("vision",)
+
+SECTIONS: tuple[str, ...] = tuple(LEGACY_IDS) + NEW_SECTIONS
 
 
 def load_host_config(ctx: Any) -> Mapping[str, Any]:
@@ -123,9 +132,10 @@ def _section_view(settings: Mapping[str, Any], section: str) -> tuple[dict[str, 
 
 def load_section(ctx: Any, section: str) -> dict[str, Any]:
     """Settings for one section, new namespace first, legacy entry as read-only fallback."""
-    if section not in LEGACY_IDS:
+    if section not in SECTIONS:
         raise KeyError(f"unknown settings section {section!r}")
-    legacy_id = LEGACY_IDS[section]
+    # ``vision`` (and anything else in NEW_SECTIONS) has no 0.x namespace to fall back to.
+    legacy_id = LEGACY_IDS.get(section)
     host = load_host_config(ctx)
 
     own = _entry_settings(ctx, PLUGIN_ID, host)
@@ -140,7 +150,7 @@ def load_section(ctx: Any, section: str) -> dict[str, Any]:
             new = dict(value)
             present = True
 
-    legacy = _entry_settings(ctx, legacy_id, host)
+    legacy = _entry_settings(ctx, legacy_id, host) if legacy_id else {}
     if legacy:
         if present:
             logger.warning(

@@ -1,9 +1,9 @@
 # 验收清单
 
-> **0.4.0 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 0.4.0 条目。
+> **0.4.0 提示（2026-11-07）**：插件已三合一为 `plugins/iibot-hermes`。本文写于合并前，文中 `inbox-wake` / `minimal-system` / `persona-mode` 的目录现为 `lib/wake` / `lib/prompt` / `lib/persona`，设置键现为 `plugins.entries.iibot-hermes.settings.{inbox,prompt,vision,persona}.*`，`allow_gateway_injection` 在 `plugins.entries.iibot-hermes.allow_gateway_injection`。映射见 `docs/CHANGELOG.md` 的 0.4.0 条目。
 
 状态图例：⬜ 未做 / 🟡 部分 / ✅ 通过 / ❌ 失败。
-✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（152 个，全绿）。
+✅ 表示**离线可证**：`python3 -m unittest discover -s tests` 里有对应用例（0.4.0-fix1 起 **257** 个，全绿）。
 🔒 表示必须在操作者自己的终端跑。
 
 > 2026-11-02 真机轮次更新：本轮在一台**可写 `$HERMES_HOME`、有真 gateway** 的机器上跑完了
@@ -259,6 +259,31 @@ Agent 只看这一段 String（用户裁定 D-002/D-015）；旧 `inbox.changed`
 | P9 | 跨板投递（`data.inbox` 与 binding 的 `inboxId` 不同）不注入、不 ack | ✅ 单测 `test_foreign_inbox_delivery_is_skipped` |
 | P10 | 真机：真实 inboxd 推一条 → Agent 收到逐字正文 → ack 生效（条目关闭、remaining 减少） | 🔒 未验证 |
 | P11 | 真机：带本地图片附件的 push 在 `hermes --tui` / gateway 会话里确实带上附件 | 🔒 未验证 |
+
+## Q. 图片必达：把 tool 消息里的图搬进 user 消息（0.4.0-fix1，2026-11-07 新增）
+
+> 本节 11 条全部离线可证（Q8/Q9 两条真机项除外），用例在 `tests/test_vision_hoist.py`（26 例）。
+
+背景：官方 `v0.22.6`（tag `f0d94882e8`）把 MCP `ImageContent` / `vision_analyze` 的图挂在 **tool 消息**
+的 `content` 列表里，而 OpenAI Chat Completions 的 tool content 只有文本块、DeepSeek 视觉文档只认
+user 消息；provider 静默丢像素，模型只看到 "Image loaded"。插件侧用第二个 `llm_request` 中间件
+（`hermes_cli/plugins.py:939` 注册、`hermes_cli/middleware.py:88` 应用、`agent/turn_api_request.py:156-166`
+调用）把图搬进 `role=user`。设计见 `docs/DESIGN.md` 第 6 节。
+
+| # | 检查 | 状态 |
+| --- | --- | --- |
+| Q0 | `hoist_images_to_user()` 把 tool 消息里的 `image_url` 摘出、原位留占位文本，并在**紧随其后**插一条 `role=user`（`[{text}, *images]`） | ✅ 单测 `tests/test_vision_hoist.py::HoistPureTests` |
+| Q1 | 搬完 `images_outside_user()` 为空；user 消息里原有的图**不动** | ✅ 单测 |
+| Q2 | 无图 / 已合规 → 返回**原对象**（`changed=False`）且中间件返回 `None`，请求逐字节不变 | ✅ 单测 |
+| Q3 | 幂等：对已搬过的请求再跑一次，结果与第一次相同（不叠加、不重复插行） | ✅ 单测 |
+| Q4 | 超过 `vision.maxImages` 时保留**最近**的、丢弃最旧的，并打一条 WARNING（降级必须留痕） | ✅ 单测 |
+| Q5 | `vision.enabled=false` → 中间件根本不注册；`vision` 在 `SECTIONS` 里但不在 `LEGACY_IDS`（无 0.x 回落，未知段仍 `KeyError`） | ✅ 单测 `VisionSettingsTests` |
+| Q6 | 与 prompt 中间件共存：同一 payload 里 system 被整段替换、同时 tool 图被搬走，两者互不覆盖 | ✅ 单测 |
+| Q7 | 垃圾输入（None / str / 无 `messages` / 坏 `maxImages`）→ 不抛异常，原样返回（fail-open） | ✅ 单测 |
+| Q8 | 真机：远程 gateway 装上 0.4.0-fix1 后，`qq_media_get` 之后模型能描述图里的内容（不再是「只回 loaded」）；`state.db` 里出现 `role=user` 且含 `image_url` 的行 | ⬜ 未验证（需维护窗口部署 + 重启 pid 74761，bot 会断一刀） |
+| Q9 | 真机：`vision.logHoist: true` 时日志出现 `iibot-hermes vision: hoisted N image(s) from … into user message #K` | ⬜ 未验证 |
+| Q10 | `hermes plugins validate plugins/iibot-hermes` 通过：`declared middleware` 为 ✓（manifest 声明 `provides_middleware: ["llm_request"]`，`hermes_cli/plugin_validate.py:438`）；加载器那条 `unknown manifest field(s) ignored: provides_middleware` 属预期输出 | ✅ 本机 |
+| Q11 | `hermes plugins doctor iibot-hermes --ci` 通过（`4 tool(s), 7 hook(s)`；`WARN: pre_tool_call` 与上述 manifest warning 均为预期，persona 默认关） | ✅ 本机 |
 
 ## Z. 真机验收记录（2026-11-02，Hermes v0.22.5+3377.g0aab6dc / Python 3.14.9）
 

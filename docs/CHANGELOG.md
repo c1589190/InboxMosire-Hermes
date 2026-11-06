@@ -1,5 +1,64 @@
 # CHANGELOG
 
+## 0.4.0-fix1 (2026-11-07) —— 图片必达：`llm_request` 中间件把图搬进 user 消息
+
+**症状。** 官方 `v0.22.6`（tag `f0d94882e8`）上模型看不见工具返回的图：`qq_media_get` 返回了
+`ImageContent`，模型却回「只回 loaded，画面没进我这边」，同时能说出「图片是 418×418」——它只拿到
+元数据，没拿到像素（远程 `state.db`：`content`/`api_content` 里 `image_url` 共 **0 条**）。
+
+**根因。** 宿主把图挂在 **tool 消息** 的 `content` 列表里
+（`tools/vision_tools.py:573 _native_tool_result_images`、`tools/mcp_tool_content.py:176
+_mcp_result_with_native_images` → `agent/tool_executor.py:1156 make_tool_result_message`）。但
+OpenAI Chat Completions 的 `ChatCompletionToolMessageParam.content` 是
+`str | Iterable[TextParam]`，没有图片成员；DeepSeek 视觉文档写明「图片仅支持出现在 **user**
+消息中」。官方 tag 没有把图提升成 user 行的逻辑（那是本仓库的宿主补丁
+`agent/tool_dispatch_helpers.py:373 hoist_tool_result_images`），provider 于是静默丢掉像素、只留
+一句 "Image loaded into your context — you can see it natively now."。
+
+**修法（插件侧，不改宿主）。** 新增 `lib/vision/hoist.py`（纯函数）+ `__init__.py` 的第二个
+`llm_request` 中间件：出站前把**所有非 user 角色**（tool/assistant/system）里的
+`image_url` / `input_image` / `image` 块摘出来，原消息换成占位文本，再在**最后一条带图消息之后**
+插一条 `role="user"`（`[{text}, *images]`，默认最多 4 张）。无图时返回 `None`，请求逐字节不变。
+
+**为什么是 100%。** ①中间件是宿主公开的改写钩子（注册 `hermes_cli/plugins.py:939`
+`register_middleware`，应用 `hermes_cli/middleware.py:88` `apply_llm_request_middleware`，其
+docstring：`{"request": {...}}` replaces the provider kwargs）；②调用点在
+`agent/turn_api_request.py:156-166`，`api_kwargs = _llm_request_mw.payload`，**每一次** API 调用都过；
+③搬完立刻 `images_outside_user()` 自检，仍有漏网就 WARNING；④幂等（已合规请求原样返回）；
+⑤异常一律 fail-open，只 warning 不打断 turn；⑥远程 `v0.22.6` 的同一份契约已只读核实，所以未打补丁
+的宿主上同样成立。
+
+**新设置** `plugins.entries.iibot-hermes.settings.vision.*`（新段，无 0.x 回落；见
+`lib/settings.py:52 NEW_SECTIONS`）：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 关掉即不注册中间件。默认开：无图时是 no-op，宿主带 `hoist_tool_result_images` 时也是 no-op |
+| `maxImages` | `4` | 单请求上限（1–16）；超出的从**最旧**开始丢弃并打 WARNING（丢弃属降级，必须留痕） |
+| `placeholder` | `""` | 原消息里留下的占位文本；空 = 内置「[图片已移出本消息，见随后那条 user 消息]」 |
+| `logHoist` | `false` | 每次搬运记一条 INFO（默认 debug）；只记数量与来源角色，不记图片内容 |
+
+**测试。** 新增 `tests/test_vision_hoist.py`（26 例）。`tests/test_consolidation.py`、
+`tests/test_minimal_system.py` 里「`llm_request` 不存在」的断言改成按**身份**挑 prompt 那条
+（`llm_request` 键现在默认就有 vision）。全量 **257 例通过**。
+
+**与 0.2.1 相反的决定（manifest 里重新声明 `provides_middleware`）。** 0.2.1 曾删掉这个键，因为加载器
+的 `_KNOWN_MANIFEST_FIELDS`（`hermes_cli/plugins_manifest.py:31-40`）不认它、每次解析打一条
+`unknown manifest field(s) ignored: provides_middleware`。但 0.4.0-fix1 起 vision 中间件默认注册，
+`hermes plugins validate` 的能力比对（`hermes_cli/plugin_validate.py:438` 的
+`("middleware", "provides_middleware")`）会判
+`✗ declared middleware — undeclared middleware registered: llm_request`，而 `docs/RUNBOOK.md` 第 3 步
+要求 `validate` 为 `ok`。两个入口互相矛盾，取校验器这边：重新声明该键，并把加载器那条 warning 记为
+**预期输出**（`provides_hooks` 的 `pre_tool_call` 警告同理，persona 默认关）。
+
+**升级注意。** 无配置迁移；`vision.enabled` 默认开，首次注册多一行
+`iibot-hermes vision: loaded (maxImages=4, …)`。若宿主已带补丁、操作者又**故意**用
+`agent.tool_result_images: inline` 让图留在 tool 行，需显式 `vision.enabled: false`。
+
+**没做的。** 不重新下载/缓存图片（只整形已有 payload，不连网）；不把搬过去的图写回会话历史
+（落库仍由宿主的 `[screenshot]` 摘要负责，`agent/tool_dispatch_helpers.py:508`）；不做 execution
+类中间件。
+
 ## 0.4.0 (2026-11-07) —— 三合一：`plugins/iibot-hermes`
 
 **合并了什么。** `inbox-wake` 0.3.1 + `minimal-system` 0.2.1 + `persona-mode` 0.2.0 合并为唯一插件

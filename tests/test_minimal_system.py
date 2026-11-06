@@ -131,11 +131,16 @@ class RegisterTests(unittest.TestCase):
         return ctx
 
     def _hook(self, ctx):
-        return ctx.middleware["llm_request"][0]
+        # 0.4.0-fix1 起 llm_request 上会同时挂 vision 中间件，按身份取，不按下标。
+        for callback in ctx.middleware.get("llm_request", []):
+            if callback is plugin._prompt_on_llm_request:
+                return callback
+        raise AssertionError("prompt middleware not registered")
 
     def test_register_wires_llm_request_middleware(self) -> None:
         ctx = self._ctx()
-        self.assertEqual(list(ctx.middleware), ["llm_request"])
+        self.assertIn("llm_request", ctx.middleware)
+        self.assertIn(plugin._prompt_on_llm_request, ctx.middleware["llm_request"])
         self.assertEqual(ctx.sections, [])
 
     def test_hook_returns_request_replacement(self) -> None:
@@ -150,8 +155,9 @@ class RegisterTests(unittest.TestCase):
 
     def test_hook_can_be_disabled(self) -> None:
         # 关闭时根本不注册中间件（不是注册后返回 None）——宿主的 system prompt 保持原样。
+        # vision 中间件是另一件事，默认仍挂着（见 test_vision_hoist.py）。
         ctx = self._ctx(enabled=False)
-        self.assertNotIn("llm_request", ctx.middleware)
+        self.assertNotIn(plugin._prompt_on_llm_request, ctx.middleware.get("llm_request", []))
 
     def test_hook_honours_a_custom_prompt(self) -> None:
         ctx = self._ctx(systemPrompt="You are 大肥鱼.")

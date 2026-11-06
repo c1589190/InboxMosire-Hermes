@@ -1,12 +1,14 @@
 name: iibot-hermes
-version: "0.4.0"
-description: "iiBot 在 Hermes 上的唯一插件：InboxMosire 唤醒适配器（SSE 游标 + 绑定会话唤醒、有界不可信摘要、占用租约、inbox.push 正文逐字注入并立即 ack、首条工作区引导、4 个 inbox_adapter_* 工具 + /inbox 命令）+ 极简 system prompt（一句常量或操作者 md 文件，走公开 llm_request 中间件，默认关闭——宿主 agent.system_prompt_override 优先）+ 人设契约注入（角色行 + PERSONA.md 合成一条 pre_llm_call 注入、hash 去重、压缩后重锚、缺文件封禁外发；默认关闭，D-009）。业务 inbox 工具（list/claim/push/complete/rest）仍留在 InboxMosire MCP 服务器。1.0.0 由 inbox-wake 0.3.1 + minimal-system 0.2.1 + persona-mode 0.2.0 合并；旧插件目录必须删除，否则同进程双重注册。"
+version: "0.4.0-fix1"
+description: "iiBot 在 Hermes 上的唯一插件：InboxMosire 唤醒适配器（SSE 游标 + 绑定会话唤醒、有界不可信摘要、占用租约、inbox.push 正文逐字注入并立即 ack、首条工作区引导、4 个 inbox_adapter_* 工具 + /inbox 命令）+ 极简 system prompt（一句常量或操作者 md 文件，走公开 llm_request 中间件，默认关闭——宿主 agent.system_prompt_override 优先）+ 人设契约注入（角色行 + PERSONA.md 合成一条 pre_llm_call 注入、hash 去重、压缩后重锚、缺文件封禁外发；默认关闭，D-009）。业务 inbox 工具（list/claim/push/complete/rest）仍留在 InboxMosire MCP 服务器。+ 图片必达（0.4.0-fix1：llm_request 中间件把 tool/assistant/system 消息里的图片搬进 role=user 消息——OpenAI Chat Completions 与 DeepSeek 视觉文档只认 user 里的图，无图时请求逐字节不变，默认开启）。1.0.0 由 inbox-wake 0.3.1 + minimal-system 0.2.1 + persona-mode 0.2.0 合并；旧插件目录必须删除，否则同进程双重注册。"
 author: "c1589190"
 manifest_version: 2
 api_version: 1
 license: "MIT"
 homepage: "https://github.com/c1589190/InboxMosire-Hermes"
-tags: ["inbox", "wake", "sse", "notifications", "inboxmosire", "system-prompt", "minimal", "persona", "guard", "iibot"]
+tags: ["inbox", "wake", "sse", "notifications", "inboxmosire", "system-prompt", "minimal", "persona", "guard", "iibot", "vision", "image", "multimodal", "openai-protocol"]
+provides_middleware:
+  - llm_request
 provides_hooks:
   - pre_llm_call
   - pre_tool_call
@@ -64,11 +66,19 @@ config_keys:
   - plugins.entries.iibot-hermes.settings.persona.outboundGuard
   - plugins.entries.iibot-hermes.settings.persona.outboundTools
   - plugins.entries.iibot-hermes.settings.persona.denyTools
+  - plugins.entries.iibot-hermes.settings.vision.enabled
+  - plugins.entries.iibot-hermes.settings.vision.maxImages
+  - plugins.entries.iibot-hermes.settings.vision.placeholder
+  - plugins.entries.iibot-hermes.settings.vision.logHoist
   - plugins.entries.iibot-hermes.allow_gateway_injection
 config_schema:
-  # 注意：Hermes 的 manifest 只认 `provides_hooks`（`hermes_cli/plugins_manifest.py:32-39` 的
-  # `_KNOWN_MANIFEST_FIELDS`），`llm_request` 是中间件不是 hook，没有可声明的字段；
-  # 写成 `provides_middleware` 只会让宿主每轮告警 "unknown manifest field(s) ignored"。
+  # 注意：`llm_request` 是**中间件**不是 hook。两个宿主入口对它的要求不一致（0.4.0-fix1 实测）：
+  #   · 校验器 `hermes_cli/plugin_validate.py:438` 把 ("middleware", "provides_middleware") 列入
+  #     能力比对，不声明就是 `✗ declared middleware — undeclared middleware registered`，`validate` 失败；
+  #   · 加载器 `hermes_cli/plugins_manifest.py:31-40` 的 `_KNOWN_MANIFEST_FIELDS` 又不收这个键，
+  #     于是每次解析 manifest 打一条 warning "unknown manifest field(s) ignored: provides_middleware"。
+  # 取校验器这边（`docs/RUNBOOK.md` 第 3 步要求 `validate` 为 ok），把那条 warning 记为**预期输出**。
+  # 本插件的 `llm_request` 中间件有两条：prompt（按开关，默认关）与 vision（0.4.0-fix1 起默认开）。
   inbox.enabled:
     type: bool
     label: 启用 inbox 唤醒
@@ -212,3 +222,23 @@ config_schema:
     default: []
     label: 工具收窄列表（后缀匹配）
     description: "空 = 不收窄；填满等价 DSH 的 Minimal toolset。"
+  vision.enabled:
+    type: bool
+    default: true
+    label: 图片必达（把非 user 消息里的图片搬进 user 消息，默认开启）
+    description: "OpenAI Chat Completions 的 tool 消息只允许文本块，DeepSeek 视觉文档也只认 user 消息里的图；宿主把 MCP ImageContent / vision_analyze 的图挂在 tool 消息上时，provider 会静默丢掉像素（模型只看到一句 \"Image loaded\"）。打开后每次出站请求都会把 tool/assistant/system 里的图片搬进紧随其后的一条 role=user 消息。无图时请求逐字节不变；宿主带 hoist_tool_result_images 补丁时是 no-op。"
+  vision.maxImages:
+    type: int
+    default: 4
+    label: 单次请求最多搬运的图片数（1-16）
+    description: "超出的从最旧的开始丢弃，并打一条 WARNING（丢弃属于降级，必须留痕）。与宿主 _MCP_NATIVE_IMAGE_MAX 同量级。"
+  vision.placeholder:
+    type: str
+    default: ""
+    label: 原消息里留下的占位文本
+    description: "留空使用内置的「[图片已移出本消息，见随后那条 user 消息]」。"
+  vision.logHoist:
+    type: bool
+    default: false
+    label: 每次搬运都记一条 INFO
+    description: "排查用；默认 debug。只记数量与来源角色，不记图片内容。"

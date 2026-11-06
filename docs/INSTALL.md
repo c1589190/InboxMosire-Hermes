@@ -122,7 +122,8 @@ hermes plugins list --user --plain
 hermes plugins doctor iibot-hermes --ci              # 聚合插件：4 tool(s) + 7 hook(s)（prompt/persona 关时只注册 wake 面；persona 打开后 9）
 # `WARN: manifest declares hook 'pre_tool_call' but registration did not add it` 是
 # persona.enabled=false 的预期结果：manifest 取并集声明，运行时按开关注册。
-hermes plugins validate plugins/iibot-hermes --json  # catalog 同款检查（可选）
+hermes plugins validate plugins/iibot-hermes --json  # catalog 同款检查（可选）；0.4.0-fix1 起 vision 默认注册
+                                                     # llm_request，必须声明 provides_middleware 才能 ok
 grep -a "iibot-hermes: effective settings" ~/.hermes/logs/agent.log | tail -1   # 生效值（不含 token）
 ```
 
@@ -165,6 +166,11 @@ hermes plugins doctor iibot-hermes
 远端不 checkout 时用 `rsync -a --delete --exclude __pycache__ plugins/iibot-hermes ops@host:.hermes/plugins/`，
 **并** `ssh ops@host 'rm -rf ~/.hermes/plugins/{inbox-wake,minimal-system,persona-mode}'`。
 细节与回滚见 `docs/RUNBOOK.md` §4。
+
+> **0.4.0-fix1 起**：`settings.vision.enabled` 默认 `true`，升级后第一次启动会多一行
+> `iibot-hermes vision: loaded (maxImages=4, …)`。无配置迁移；要关掉（只在你故意让图留在 tool 行时）：
+> `hermes config set plugins.entries.iibot-hermes.settings.vision.enabled false`。
+> 端口/权限相关设置不变，`./scripts/install.sh` 不需要为新段做任何事（缺省即默认值）。
 
 ## 6. kit：一个目录 + 一句话自动挂载
 
